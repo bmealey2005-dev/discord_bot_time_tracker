@@ -63,7 +63,7 @@ You can also set the timezone per server with `/settimezone` (recommended once y
 On Windows, the `tzdata` dependency is included so IANA timezones work consistently.
 
 ## Hourly activity heatmap (`/hourly-data`)
-Each weekday row is 24 monospace `█` cells (hours 0–23, guild timezone) inside a Discord **ansi** code block so bars stay narrow and usually on one line (plain emoji stay large; subtext does not shrink them).
+Each weekday row is 24 hours (0–23, guild timezone) inside a Discord **ansi** code block: **two spaces per hour** with a background color (runs of the same color are merged so Discord does not draw hairline `█` slivers).
 
 - **Black** No work, or ≤300 seconds in that hour
 - **Red** More than 300s and less than 1800s

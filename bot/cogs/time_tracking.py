@@ -137,25 +137,43 @@ def _progress_bar_blue(pct: float, *, width: int = 12) -> str:
     return (fill * filled) + (empty * (width - filled))
 
 
-# Discord ```ansi``` blocks use monospace cells; emoji stay large in embeds, so hour bars use █ + SGR.
+# Discord ```ansi``` blocks: use background on two spaces per hour (█ rendered as hairline
+# slivers in Discord). Merge consecutive identical colors into one SGR run.
 _ANSI_ESC = "\u001b["
-_ANSI_BLK = "█"
+_ANSI_HOUR_CELL = "  "  # two spaces — background color fills width in ansi
+_ANSI_RESET = f"{_ANSI_ESC}0m"
 
 
-def _hour_bucket_ansi(worked: int, bucket_span: int) -> str:
-    """One narrow ANSI cell for an hour bucket (same thresholds as the original emoji scale)."""
+def _hour_bucket_sgr_suffix(worked: int, bucket_span: int) -> str:
+    """Background SGR suffix (e.g. 42m) for one hour bucket; same thresholds as former emoji scale."""
     worked = max(0, int(worked))
     span = max(0, int(bucket_span))
-    r = f"{_ANSI_ESC}0m"
     if span <= 0 or worked == 0:
-        return f"{_ANSI_ESC}40m{_ANSI_BLK}{r}"
+        return "40m"
     if worked >= span or worked >= 3600:
-        return f"{_ANSI_ESC}42m{_ANSI_BLK}{r}"
+        return "42m"
     if worked >= 1800:
-        return f"{_ANSI_ESC}43m{_ANSI_BLK}{r}"
+        return "43m"
     if worked > 300:
-        return f"{_ANSI_ESC}41m{_ANSI_BLK}{r}"
-    return f"{_ANSI_ESC}40m{_ANSI_BLK}{r}"
+        return "41m"
+    return "40m"
+
+
+def _ansi_packed_hour_bar(sgr_suffixes: list[str]) -> str:
+    """Pack 24 hourly SGR codes into runs of colored double-space cells."""
+    if len(sgr_suffixes) != 24:
+        raise ValueError("expected 24 hourly buckets")
+    parts: list[str] = []
+    i = 0
+    while i < 24:
+        suf = sgr_suffixes[i]
+        j = i + 1
+        while j < 24 and sgr_suffixes[j] == suf:
+            j += 1
+        run_hours = j - i
+        parts.append(f"{_ANSI_ESC}{suf}{_ANSI_HOUR_CELL * run_hours}{_ANSI_RESET}")
+        i = j
+    return "".join(parts)
 
 
 def _hourly_day_bar_ansi_from_sessions(
@@ -166,14 +184,14 @@ def _hourly_day_bar_ansi_from_sessions(
     rows: list[Mapping[str, Any]],
     now_ts: int,
 ) -> str:
-    """24 monospace █ cells (ANSI bg colors) for local hours 0..23 on day [ds, de)."""
+    """24 two-space-wide ANSI cells (bg colors) for local hours 0..23 on day [ds, de)."""
     midnight_local = datetime.fromtimestamp(int(ds), tz=timezone.utc).astimezone(tz)
     segments: list[tuple[int, int]] = []
     for row in rows:
         s = int(row["started_at"])
         e = int(row["ended_at"]) if row["ended_at"] is not None else int(now_ts)
         segments.append((s, e))
-    parts: list[str] = []
+    codes: list[str] = []
     for h in range(24):
         seg_start_local = midnight_local + timedelta(hours=h)
         seg_end_local = seg_start_local + timedelta(hours=1)
@@ -182,14 +200,14 @@ def _hourly_day_bar_ansi_from_sessions(
         b_start = max(seg_start_ts, int(ds))
         b_end = min(seg_end_ts, int(de))
         if b_start >= b_end:
-            parts.append(_hour_bucket_ansi(0, 0))
+            codes.append(_hour_bucket_sgr_suffix(0, 0))
             continue
         bucket_span = b_end - b_start
         worked = 0
         for s, e in segments:
             worked += overlap_seconds(s, e, b_start, b_end)
-        parts.append(_hour_bucket_ansi(worked, bucket_span))
-    return "".join(parts)
+        codes.append(_hour_bucket_sgr_suffix(worked, bucket_span))
+    return _ansi_packed_hour_bar(codes)
 
 
 def _hourly_user_blocks_to_description_pages(
@@ -229,7 +247,8 @@ def _hourly_user_blocks_to_description_pages(
 
 
 _HOURLY_EMBED_FOOTER = (
-    "Hour bars use a monospace ANSI block (█): black ≤300s · red <1800s · yellow <3600s · green full or ≥3600s."
+    "Hour bars use ANSI background colors (two spaces per hour; merged runs): black ≤300s · red <1800s "
+    "· yellow <3600s · green full or ≥3600s."
 )
 
 
