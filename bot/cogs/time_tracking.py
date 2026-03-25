@@ -1073,7 +1073,8 @@ class TimeTrackingCog(commands.Cog):
             day_lines: list[str] = []
             for di, (ds, de) in enumerate(day_windows):
                 bar = _hourly_day_bar_from_sessions(ds=ds, de=de, tz=tz, rows=rows, now_ts=now_ts)
-                day_lines.append(f"    - {day_labels[di]}: {bar}")
+                # "-# " = Discord subtext (smaller); keeps 24 emoji bars on one line in most clients.
+                day_lines.append(f"-#     - {day_labels[di]}: {bar}")
             blocks.append("\n".join([header, *day_lines]))
 
         # One ranked user per embed (after the first) so each description stays short. Discord often
