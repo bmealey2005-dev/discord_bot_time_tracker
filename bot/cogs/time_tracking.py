@@ -186,6 +186,12 @@ def _hourly_day_bar_from_sessions(
     return "".join(parts)
 
 
+def _hourly_weekday_am_pm_block(day_label: str, bar_24: str) -> str:
+    """Weekday label + AM row (hours 0–11) + PM row (12–23), each row 12 emoji."""
+    b = (bar_24 + ("⬛" * 24))[:24]
+    return f"    - {day_label}:\n      {b[:12]}\n      {b[12:]}"
+
+
 def _hourly_user_blocks_to_description_pages(
     blocks: list[str],
     *,
@@ -223,8 +229,8 @@ def _hourly_user_blocks_to_description_pages(
 
 
 _HOURLY_EMBED_FOOTER = (
-    "Each day: 24 blocks (local hours 0–23). ⬛ none/≤300s 🟧 >300s & <1800s "
-    "🟨 ≥1800s & <3600s 🟩 ≥3600s or full bucket length."
+    "Per day: top row = hours 0–11 (AM), bottom = 12–23 (PM), guild-local. "
+    "⬛ none/≤300s 🟧 >300s & <1800s 🟨 ≥1800s & <3600s 🟩 ≥3600s or full bucket."
 )
 
 
@@ -1073,8 +1079,7 @@ class TimeTrackingCog(commands.Cog):
             day_lines: list[str] = []
             for di, (ds, de) in enumerate(day_windows):
                 bar = _hourly_day_bar_from_sessions(ds=ds, de=de, tz=tz, rows=rows, now_ts=now_ts)
-                # -# is Discord subtext (smaller); keeps 24-hour emoji rows on one line in most clients.
-                day_lines.append(f"-# {day_labels[di]}: {bar}")
+                day_lines.append(_hourly_weekday_am_pm_block(day_labels[di], bar))
             blocks.append("\n".join([header, *day_lines]))
 
         # One ranked user per embed (after the first) so each description stays short. Discord often

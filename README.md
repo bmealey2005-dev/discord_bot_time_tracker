@@ -8,7 +8,7 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/status` show whether you're clocked in + elapsed time 
 - `/report [user] [week_offset]` weekly total for a specific user (defaults to you) 
 - `/leaderboard [week_offset]` weekly totals for everyone with sessions
-- `/hourly-data [week_offset]` weekly heatmap: 24 blocks per day (guild-local hours 0–23) per user; uses the same week and report-channel behavior as `/leaderboard`. Each user after the first gets their own embed so clients don’t clip long descriptions; users 10+ share the last embed (up to 10 embeds per message)
+- `/hourly-data [week_offset]` weekly heatmap: per weekday, two rows of 12 blocks (AM hours 0–11, PM 12–23, guild-local); uses the same week/report-channel behavior as `/leaderboard`. Each user after the first gets their own embed; users 10+ share the last embed (up to 10 embeds per message)
 - `/setreportchannel [channel]` (Manage Server/Admin) set the channel to post reports/leaderboards
 - `/postpanel` (Manage Server/Admin) post a persistent button panel (Start/Stop/Status) in the current channel
 - `/restoreday user week_offset weekday seconds` owner-only data restore tool (user id `761895875361505281`)
@@ -63,7 +63,7 @@ You can also set the timezone per server with `/settimezone` (recommended once y
 On Windows, the `tzdata` dependency is included so IANA timezones work consistently.
 
 ## Hourly activity heatmap (`/hourly-data`)
-Each weekday line uses Discord **subtext** (`-#`) so the day label and 24 hour blocks stay on one row in typical clients. Emoji order is local hours 0–23 (guild timezone):
+Each weekday uses **three lines**: the day name, then **12 emoji for hours 0–11 (AM)**, then **12 emoji for hours 12–23 (PM)** (guild timezone). This avoids one 24-character row wrapping awkwardly in narrow clients.
 
 - ⬛ No work, or ≤300 seconds in that hour
 - 🟧 More than 300s and less than 1800s
