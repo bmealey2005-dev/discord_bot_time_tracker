@@ -25,7 +25,7 @@ Weekly totals are computed from stored sessions using a timezone-aware week wind
    - Scopes: `bot`, `applications.commands`
    - Bot permissions (minimum): `Send Messages`, `Embed Links`, `Read Message History`
 4. Paste the token into your `.env` file as `DISCORD_TOKEN=...`.
-   - Do not commit or share your token.
+   - Do not commit or share your token. 
 5. (Optional but recommended for dev) Get your server (guild) ID:
    - Discord User Settings -> Advanced -> Developer Mode (enable)
    - Right-click your server -> Copy Server ID
