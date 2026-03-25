@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, time as dt_time
 import time
-from typing import Any
+from typing import Any, Mapping
 
 import aiosqlite
 import discord
@@ -135,6 +135,55 @@ def _progress_bar_blue(pct: float, *, width: int = 12) -> str:
     fill = "🟦"
     empty = "⬛"
     return (fill * filled) + (empty * (width - filled))
+
+
+def _hour_bucket_emoji(worked: int, bucket_span: int) -> str:
+    """Map worked seconds in a local hour bucket to a block emoji (guild-local heatmap)."""
+    worked = max(0, int(worked))
+    span = max(0, int(bucket_span))
+    if span <= 0 or worked == 0:
+        return "⬛"
+    if worked >= span or worked >= 3600:
+        return "🟩"
+    if worked >= 1800:
+        return "🟨"
+    if worked > 300:
+        return "🟧"
+    return "⬛"
+
+
+def _hourly_day_bar_from_sessions(
+    *,
+    ds: int,
+    de: int,
+    tz: ZoneInfo,
+    rows: list[Mapping[str, Any]],
+    now_ts: int,
+) -> str:
+    """24 emoji for local clock hours 0..23 on day [ds, de), from session rows."""
+    midnight_local = datetime.fromtimestamp(int(ds), tz=timezone.utc).astimezone(tz)
+    segments: list[tuple[int, int]] = []
+    for r in rows:
+        s = int(r["started_at"])
+        e = int(r["ended_at"]) if r["ended_at"] is not None else int(now_ts)
+        segments.append((s, e))
+    parts: list[str] = []
+    for h in range(24):
+        seg_start_local = midnight_local + timedelta(hours=h)
+        seg_end_local = seg_start_local + timedelta(hours=1)
+        seg_start_ts = int(seg_start_local.timestamp())
+        seg_end_ts = int(seg_end_local.timestamp())
+        b_start = max(seg_start_ts, int(ds))
+        b_end = min(seg_end_ts, int(de))
+        if b_start >= b_end:
+            parts.append(_hour_bucket_emoji(0, 0))
+            continue
+        span = b_end - b_start
+        worked = 0
+        for s, e in segments:
+            worked += overlap_seconds(s, e, b_start, b_end)
+        parts.append(_hour_bucket_emoji(worked, span))
+    return "".join(parts)
 
 
 def _format_hours_compact(total_seconds: int) -> str:
@@ -768,6 +817,104 @@ class TimeTrackingCog(commands.Cog):
         embed.set_footer(text="Daily bullets show hours per day (week-local).")
         return embed
 
+    async def _build_hourly_data_embed(
+        self,
+        *,
+        guild_id: int,
+        now_ts: int,
+        tz_name: str,
+        week_start: int,
+        week_offset: int,
+    ) -> discord.Embed:
+        window = compute_week_window(
+            now=_dt_from_ts(now_ts),
+            tz_name=tz_name,
+            week_start=int(week_start),
+            week_offset=int(week_offset),
+        )
+        day_windows = self._compute_day_windows_for_week(
+            week_start_ts=window.start_ts,
+            tz_name=tz_name,
+        )
+        try:
+            tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            tz = ZoneInfo("UTC")
+
+        user_ids = await self.db.list_users_with_sessions_in_window(
+            guild_id=int(guild_id),
+            window_start=window.start_ts,
+            window_end=window.end_ts,
+        )
+        breakdowns: list[LeaderboardUserBreakdown] = []
+        session_rows_by_user: dict[int, list[Mapping[str, Any]]] = {}
+        for uid in user_ids:
+            rows = await self.db.list_sessions_overlapping_window(
+                guild_id=int(guild_id),
+                user_id=int(uid),
+                window_start=window.start_ts,
+                window_end=window.end_ts,
+            )
+            session_rows_by_user[int(uid)] = list(rows)
+            day_totals = [0] * 7
+            for r in rows:
+                s = int(r["started_at"])
+                e = int(r["ended_at"]) if r["ended_at"] is not None else int(now_ts)
+                for di, (ds, de) in enumerate(day_windows):
+                    day_totals[di] += overlap_seconds(s, e, ds, de)
+
+            week_total = sum(day_totals)
+            breakdowns.append(
+                LeaderboardUserBreakdown(
+                    user_id=int(uid),
+                    week_total_seconds=int(week_total),
+                    day_totals_seconds=day_totals,
+                )
+            )
+
+        breakdowns.sort(key=lambda t: t.week_total_seconds, reverse=True)
+
+        day_labels = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        ws = int(week_start)
+        day_labels = day_labels[ws:] + day_labels[:ws]
+
+        blocks: list[str] = []
+        for i, b in enumerate(breakdowns[:25], start=1):
+            header = f"{i}. <@{b.user_id}> — {_format_duration(b.week_total_seconds)}"
+            rows = session_rows_by_user[b.user_id]
+            day_lines: list[str] = []
+            for di, (ds, de) in enumerate(day_windows):
+                bar = _hourly_day_bar_from_sessions(ds=ds, de=de, tz=tz, rows=rows, now_ts=now_ts)
+                day_lines.append(f"    - {day_labels[di]}: {bar}")
+            blocks.append("\n".join([header, *day_lines]))
+
+        joined = ""
+        kept = 0
+        for block in blocks:
+            candidate = (joined + ("\n\n" if joined else "") + block)
+            if len(candidate) > 3800:
+                break
+            joined = candidate
+            kept += 1
+        if kept < len(blocks):
+            joined += f"\n\n… and {len(blocks) - kept} more"
+
+        embed = discord.Embed(title="Weekly hourly activity", color=discord.Color.dark_magenta())
+        embed.add_field(name="Week window", value=f"<t:{window.start_ts}:D> → <t:{window.end_ts - 1}:D>", inline=False)
+        week_progress, week_ends = self._format_week_progress(
+            now_ts=now_ts,
+            window_start=window.start_ts,
+            window_end=window.end_ts,
+        )
+        embed.add_field(name="Week progress", value=f"{week_progress}\n{week_ends}", inline=False)
+        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=tz_name)
+        embed.add_field(name="Day progress", value=f"{day_progress}\n{day_ends}", inline=False)
+        embed.description = joined if joined else "No sessions found for this week."
+        embed.set_footer(
+            text="Each day: 24 blocks (local hours 0–23). ⬛ none/≤300s 🟧 >300s & <1800s 🟨 ≥1800s & <3600s 🟩 ≥3600s or full bucket length."
+        )
+        return embed
+
     async def _maybe_send_weekly_announcement(self) -> None:
         now_ts = int(time.time())
         previous_week = compute_week_window(
@@ -1180,6 +1327,51 @@ class TimeTrackingCog(commands.Cog):
         else:
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
+    async def _handle_hourly_data(
+        self,
+        interaction: discord.Interaction,
+        *,
+        week_offset: int,
+        update_invoking_message: bool = False,
+    ) -> None:
+        if not await self._require_guild(interaction):
+            return
+
+        assert interaction.guild is not None
+        assert interaction.user is not None
+
+        if not update_invoking_message and not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True, thinking=True)
+
+        now_ts = int(time.time())
+        settings = await self._get_settings(interaction.guild.id)
+        embed = await self._build_hourly_data_embed(
+            guild_id=interaction.guild.id,
+            now_ts=now_ts,
+            tz_name=settings["timezone"],
+            week_start=int(settings["week_start"]),
+            week_offset=int(week_offset),
+        )
+
+        active = await self.db.get_active_session(guild_id=interaction.guild.id, user_id=interaction.user.id)
+        view = LeaderboardActionsView(self, clocked_in=(active is not None))
+
+        posted_channel = await self._maybe_post_to_report_channel(
+            interaction=interaction,
+            settings=settings,
+            embed=embed,
+        )
+        content = f"Posted hourly activity in {posted_channel.mention}." if posted_channel is not None else None
+
+        if update_invoking_message and interaction.message is not None and not interaction.response.is_done():
+            await interaction.response.edit_message(content=content, embed=embed, view=view)
+            return
+
+        if posted_channel is not None:
+            await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
+        else:
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
     @app_commands.command(name="start", description="Start a work session timer.")
     @app_commands.describe(note="Optional note about what you're working on")
     async def start(self, interaction: discord.Interaction, note: str | None = None) -> None:
@@ -1259,6 +1451,18 @@ class TimeTrackingCog(commands.Cog):
         week_offset: app_commands.Range[int, -52, 52] = 0,
     ) -> None:
         await self._handle_leaderboard(interaction, week_offset=int(week_offset))
+
+    @app_commands.command(
+        name="hourly-data",
+        description="Show which local hours each person worked during the week (heatmap).",
+    )
+    @app_commands.describe(week_offset="0=current week, -1=previous week")
+    async def hourly_data(
+        self,
+        interaction: discord.Interaction,
+        week_offset: app_commands.Range[int, -52, 52] = 0,
+    ) -> None:
+        await self._handle_hourly_data(interaction, week_offset=int(week_offset))
 
     @app_commands.command(
         name="restoreday",

@@ -8,6 +8,7 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/status` show whether you're clocked in + elapsed time 
 - `/report [user] [week_offset]` weekly total for a specific user (defaults to you) 
 - `/leaderboard [week_offset]` weekly totals for everyone with sessions
+- `/hourly-data [week_offset]` weekly heatmap: 24 blocks per day (guild-local hours 0–23) per user; uses the same week and report-channel behavior as `/leaderboard`
 - `/setreportchannel [channel]` (Manage Server/Admin) set the channel to post reports/leaderboards
 - `/postpanel` (Manage Server/Admin) post a persistent button panel (Start/Stop/Status) in the current channel
 - `/restoreday user week_offset weekday seconds` owner-only data restore tool (user id `761895875361505281`)
@@ -60,6 +61,14 @@ The bot stores raw sessions (start/end timestamps) and computes totals based on 
 You can also set the timezone per server with `/settimezone` (recommended once you deploy).
 
 On Windows, the `tzdata` dependency is included so IANA timezones work consistently.
+
+## Hourly activity heatmap (`/hourly-data`)
+Each weekday line is 24 emoji in order for local hours 0–23 (guild timezone):
+
+- ⬛ No work, or ≤300 seconds in that hour
+- 🟧 More than 300s and less than 1800s
+- 🟨 At least 1800s worked in that hour and less than 3600s (and the hour is not fully filled)
+- 🟩 At least 3600s worked in that hour, or worked time spans the full length of that hour bucket (including shorter DST hours)
 
 ## Manual restore command (owner-only)
 Use `/restoreday` to restore historical time after data-loss incidents.
