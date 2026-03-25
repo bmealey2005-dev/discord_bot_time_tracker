@@ -187,9 +187,11 @@ def _hourly_day_bar_from_sessions(
 
 
 def _hourly_weekday_am_pm_block(day_label: str, bar_24: str) -> str:
-    """Weekday label + AM row (hours 0–11) + PM row (12–23), each row 12 emoji."""
+    """Three visual rows: weekday, AM (h 0–11), PM (12–23). No markdown list (Discord folds those onto one line)."""
     b = (bar_24 + ("⬛" * 24))[:24]
-    return f"    - {day_label}:\n      {b[:12]}\n      {b[12:]}"
+    am, pm = b[:12], b[12:]
+    # Blank line after the title so clients don't merge title + AM row.
+    return f"**{day_label}**\n\n{am}\n{pm}"
 
 
 def _hourly_user_blocks_to_description_pages(
@@ -229,7 +231,7 @@ def _hourly_user_blocks_to_description_pages(
 
 
 _HOURLY_EMBED_FOOTER = (
-    "Per day: top row = hours 0–11 (AM), bottom = 12–23 (PM), guild-local. "
+    "Per day: bold name + blank line + 12 emoji (hours 0–11) + 12 emoji (12–23), guild-local. "
     "⬛ none/≤300s 🟧 >300s & <1800s 🟨 ≥1800s & <3600s 🟩 ≥3600s or full bucket."
 )
 

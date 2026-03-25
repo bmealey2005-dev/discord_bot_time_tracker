@@ -2,7 +2,7 @@
 
 Small-team Discord bot for tracking hourly work sessions with weekly totals and optional report-channel posting.
 
-## Features    
+## Features     
 - `/start [note]` start a work session (one active session per user per server)
 - `/stop` stop the active session and show session duration + current week total
 - `/status` show whether you're clocked in + elapsed time 
@@ -63,7 +63,7 @@ You can also set the timezone per server with `/settimezone` (recommended once y
 On Windows, the `tzdata` dependency is included so IANA timezones work consistently.
 
 ## Hourly activity heatmap (`/hourly-data`)
-Each weekday uses **three lines**: the day name, then **12 emoji for hours 0–11 (AM)**, then **12 emoji for hours 12–23 (PM)** (guild timezone). This avoids one 24-character row wrapping awkwardly in narrow clients.
+Each weekday is **three lines** in the embed (guild-local time): a **bold** day name, a blank line, **12 emoji for hours 0–11**, then **12 emoji for hours 12–23**. Rows are not Markdown list items so Discord doesn’t reflow them onto one line.
 
 - ⬛ No work, or ≤300 seconds in that hour
 - 🟧 More than 300s and less than 1800s
