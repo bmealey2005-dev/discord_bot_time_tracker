@@ -7,15 +7,16 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/stop` stop the active session and show session duration + current week total
 - `/status` show whether you're clocked in + elapsed time 
 - `/report [user] [week_offset]` weekly total for a specific user (defaults to you) 
-- `/leaderboard [week_offset]` weekly totals for everyone with sessions 
-- `/hourly-data [week_offset]` weekly heatmap: per weekday, two rows of 12 blocks (AM hours 0–11, PM 12–23, guild-local); uses the same week/report-channel behavior as `/leaderboard`. Each user after the first gets their own embed; users 10+ share the last embed (up to 10 embeds per message)
+- `/leaderboard [week_offset]` weekly totals for everyone with sessions (day/week boundaries are localized to the timezone of the user who runs the command)
+- `/hourly-data [week_offset]` weekly heatmap: per weekday, two rows of 12 blocks (AM hours 0–11, PM 12–23, localized to the timezone of the user who runs the command); uses the same week/report-channel behavior as `/leaderboard`. Each user after the first gets their own embed; users 10+ share the last embed (up to 10 embeds per message)
 - `/setreportchannel [channel]` (Manage Server/Admin) set the channel to post reports/leaderboards
 - `/postpanel` (Manage Server/Admin) post a persistent button panel (Start/Stop/Status) in the current channel
 - `/restoreday user week_offset weekday seconds` owner-only data restore tool (user id `761895875361505281`)
 - Automatic weekly leaderboard announcement (public post with `@everyone`)
 - `/testweeklyannouncement` developer-only command to post immediate announcement preview in current channel (no dedupe)
 
-Weekly totals are computed from stored sessions using a timezone-aware week window. Data is kept (no destructive weekly reset); totals naturally \"reset\" when the week window changes.
+Weekly totals are computed from stored sessions using timezone-aware week windows. Data is kept (no destructive weekly reset); totals naturally \"reset\" when the week window changes.
+For private user-triggered outputs (`/start`, `/stop`, `/status`, `/leaderboard`, `/hourly-data`), time windows are localized to the invoking user's configured offset mapping (fallback `UTC+0`).
 
 ## Discord app setup (one-time)
 1. Go to https://discord.com/developers/applications and create an application.
@@ -63,7 +64,7 @@ You can also set the timezone per server with `/settimezone` (recommended once y
 On Windows, the `tzdata` dependency is included so IANA timezones work consistently.
 
 ## Hourly activity heatmap (`/hourly-data`)
-Each weekday is **three lines** (guild-local time): **bold** day name, then **12 emoji (0–11)** immediately below, then **12 emoji (12–23)**. A **blank line** separates one day’s PM row from the next day’s name. No Markdown list markers so Discord doesn’t reflow onto one line.
+Each weekday is **three lines** (invoker-local time): **bold** day name, then **12 emoji (0–11)** immediately below, then **12 emoji (12–23)**. A **blank line** separates one day’s PM row from the next day’s name. No Markdown list markers so Discord doesn’t reflow onto one line.
 
 - ⬛ No work, or ≤300 seconds in that hour
 - 🟧 More than 300s and less than 1800s
@@ -86,11 +87,18 @@ The command resolves day boundaries using the guild timezone and configured week
 ## Automatic weekly leaderboard announcement
 The bot automatically posts a weekly leaderboard announcement:
 
-- Schedule: at CT week rollover (Monday 12:00 AM) for Monday→Sunday weeks
+- Schedule: at fixed `UTC-6` week rollover (Monday 12:00 AM) for Monday→Sunday weeks
 - Channel: `1469817014448029807`
 - Mention: pings `@everyone`
 - Content: same leaderboard format/content as `/leaderboard`
 - Visibility: posted publicly in the channel (not ephemeral)
+
+Per-user command timezone mapping currently used for private user-triggered output:
+- `1014149760204156938 -> UTC+0`
+- `629991962522681365 -> UTC+1`
+- `434418013916233755 -> UTC+1`
+- `761895875361505281 -> UTC-6`
+- Any unmapped user defaults to `UTC+0`
 
 The bot stores weekly post markers in the database to avoid duplicate announcements for the same week after restarts.
 

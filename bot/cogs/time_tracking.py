@@ -27,9 +27,17 @@ WEEKDAY_MON_INDEX = {
     "sunday": 6,
 }
 WEEKLY_ANNOUNCEMENT_CHANNEL_ID = 1469817014448029807
-WEEKLY_ANNOUNCEMENT_TIMEZONE = "America/Chicago"
+# Fixed UTC-6 (year-round, no DST) for shared public weekly announcements.
+WEEKLY_ANNOUNCEMENT_TIMEZONE = "Etc/GMT+6"
 WEEKLY_ANNOUNCEMENT_WEEK_START = 0  # Monday
 WEEKLY_ANNOUNCEMENT_GRACE_SECONDS = 15 * 60
+USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
+    1014149760204156938: "UTC+0",
+    629991962522681365: "UTC+1",
+    434418013916233755: "UTC+1",
+    761895875361505281: "UTC-6",
+}
+DEFAULT_USER_TIMEZONE_OFFSET = "UTC+0"
 
 
 def _format_duration(total_seconds: int) -> str:
@@ -45,6 +53,28 @@ def _format_duration(total_seconds: int) -> str:
 
 def _dt_from_ts(ts: int) -> datetime:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+
+
+def _zoneinfo_name_from_utc_offset_label(offset_label: str) -> str:
+    """Map labels like UTC+1/UTC-6 to fixed-offset IANA names."""
+    label = offset_label.strip().upper()
+    if label == "UTC":
+        return "UTC"
+
+    m = re.fullmatch(r"UTC([+-])(\d{1,2})", label)
+    if not m:
+        return "UTC"
+
+    sign = m.group(1)
+    hours = int(m.group(2))
+    if hours == 0:
+        return "UTC"
+    if hours < 0 or hours > 14:
+        return "UTC"
+
+    # IANA Etc/GMT signs are inverted: Etc/GMT+6 is UTC-6.
+    etc_sign = "-" if sign == "+" else "+"
+    return f"Etc/GMT{etc_sign}{hours}"
 
 
 def _format_hours_minutes(total_seconds: int) -> str:
@@ -138,7 +168,7 @@ def _progress_bar_blue(pct: float, *, width: int = 12) -> str:
 
 
 def _hour_bucket_emoji(worked: int, bucket_span: int) -> str:
-    """Map worked seconds in a local hour bucket to a block emoji (guild-local heatmap)."""
+    """Map worked seconds in a local hour bucket to a block emoji (viewer-local heatmap)."""
     worked = max(0, int(worked))
     span = max(0, int(bucket_span))
     if span <= 0 or worked == 0:
@@ -684,6 +714,13 @@ class TimeTrackingCog(commands.Cog):
         except ZoneInfoNotFoundError:
             return False
 
+    def _resolve_user_timezone(self, *, user_id: int) -> str:
+        label = USER_TIMEZONE_OFFSET_BY_ID.get(int(user_id), DEFAULT_USER_TIMEZONE_OFFSET)
+        tz_name = _zoneinfo_name_from_utc_offset_label(label)
+        if self._is_valid_timezone(tz_name):
+            return tz_name
+        return "UTC"
+
     async def _update_clocked_in_role(self, interaction: discord.Interaction, *, clocked_in: bool) -> str | None:
         """Add/remove the configured clocked-in role for the interacting user.
 
@@ -1205,7 +1242,7 @@ class TimeTrackingCog(commands.Cog):
                 if (now_ts - int(current_week.start_ts)) <= WEEKLY_ANNOUNCEMENT_GRACE_SECONDS:
                     await self._maybe_send_weekly_announcement()
 
-                # Sleep until the end of the current CT week.
+                # Sleep until the end of the current announcement week.
                 sleep_for = max(1, int(current_week.end_ts) - int(now_ts))
                 await asyncio.sleep(sleep_for)
             except asyncio.CancelledError:
@@ -1293,18 +1330,19 @@ class TimeTrackingCog(commands.Cog):
         role_warning = await self._update_clocked_in_role(interaction, clocked_in=True)
 
         settings = await self._get_settings(interaction.guild.id)
+        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
         daily_total = await self._compute_daily_total_seconds(
             guild_id=interaction.guild.id,
             user_id=interaction.user.id,
             now_ts=now_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
         )
         weekly_total = await self._compute_weekly_total(
             guild_id=interaction.guild.id,
             user_id=interaction.user.id,
             week_offset=0,
             now_ts=now_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=settings["week_start"],
         )
         nick_warning = await self._update_nickname_week_hours(
@@ -1314,7 +1352,7 @@ class TimeTrackingCog(commands.Cog):
 
         window = compute_week_window(
             now=_dt_from_ts(now_ts),
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=settings["week_start"],
             week_offset=0,
         )
@@ -1323,7 +1361,7 @@ class TimeTrackingCog(commands.Cog):
             window_start=window.start_ts,
             window_end=window.end_ts,
         )
-        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=settings["timezone"])
+        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=tz_name)
 
         embed = discord.Embed(title="Clocked in", color=discord.Color.green())
         started_dt = _dt_from_ts(now_ts)
@@ -1373,15 +1411,16 @@ class TimeTrackingCog(commands.Cog):
         role_warning = await self._update_clocked_in_role(interaction, clocked_in=False)
 
         settings = await self._get_settings(interaction.guild.id)
+        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
         daily_total = await self._compute_daily_total_seconds(
             guild_id=interaction.guild.id,
             user_id=interaction.user.id,
             now_ts=now_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
         )
         window = compute_week_window(
             now=_dt_from_ts(now_ts),
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=settings["week_start"],
             week_offset=0,
         )
@@ -1390,7 +1429,7 @@ class TimeTrackingCog(commands.Cog):
             user_id=interaction.user.id,
             week_offset=0,
             now_ts=now_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=settings["week_start"],
         )
         nick_warning = await self._update_nickname_week_hours(
@@ -1403,7 +1442,7 @@ class TimeTrackingCog(commands.Cog):
             window_start=window.start_ts,
             window_end=window.end_ts,
         )
-        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=settings["timezone"])
+        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=tz_name)
 
         embed = discord.Embed(title="Clocked out", color=discord.Color.blurple())
         embed.add_field(name="Session duration", value=_format_duration(duration), inline=True)
@@ -1436,15 +1475,16 @@ class TimeTrackingCog(commands.Cog):
         role_warning = await self._update_clocked_in_role(interaction, clocked_in=(active is not None))
 
         settings = await self._get_settings(interaction.guild.id)
+        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
         daily_total = await self._compute_daily_total_seconds(
             guild_id=interaction.guild.id,
             user_id=interaction.user.id,
             now_ts=now_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
         )
         window = compute_week_window(
             now=_dt_from_ts(now_ts),
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=settings["week_start"],
             week_offset=0,
         )
@@ -1453,7 +1493,7 @@ class TimeTrackingCog(commands.Cog):
             user_id=interaction.user.id,
             week_offset=0,
             now_ts=now_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=settings["week_start"],
         )
         nick_warning = await self._update_nickname_week_hours(
@@ -1466,7 +1506,7 @@ class TimeTrackingCog(commands.Cog):
             window_start=window.start_ts,
             window_end=window.end_ts,
         )
-        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=settings["timezone"])
+        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=tz_name)
 
         if active is None:
             embed = discord.Embed(title="Status", color=discord.Color.dark_grey())
@@ -1527,10 +1567,11 @@ class TimeTrackingCog(commands.Cog):
 
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
+        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
         embed = await self._build_leaderboard_embed(
             guild_id=interaction.guild.id,
             now_ts=now_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=int(settings["week_start"]),
             week_offset=int(week_offset),
         )
@@ -1573,10 +1614,11 @@ class TimeTrackingCog(commands.Cog):
 
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
+        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
         embeds = await self._build_hourly_data_embeds(
             guild_id=interaction.guild.id,
             now_ts=now_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=int(settings["week_start"]),
             week_offset=int(week_offset),
         )
