@@ -1,0 +1,1 @@
+Create a script for me in the cmds/ folder to run as a one-time command in the Command Bar of Roblox Studio that does the following:

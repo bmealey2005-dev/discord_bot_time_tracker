@@ -1,0 +1,1 @@
+Make a luau script for me in the cmds/ folder. This script will be run as a one-time command in Roblox Studio's Command Bar. This script is going to create a new ScreenGui in StarterGui.
