@@ -63,12 +63,14 @@ You can also set the timezone per server with `/settimezone` (recommended once y
 On Windows, the `tzdata` dependency is included so IANA timezones work consistently.
 
 ## Hourly activity heatmap (`/hourly-data`)
-Each weekday line is 24 emoji in order for local hours 0–23 (guild timezone). Lines use Discord subtext (`-#`) so the bar is smaller and usually stays on one row:
+Each weekday row is 24 monospace `█` cells (hours 0–23, guild timezone) inside a Discord **ansi** code block so bars stay narrow and usually on one line (plain emoji stay large; subtext does not shrink them).
 
-- ⬛ No work, or ≤300 seconds in that hour
-- 🟧 More than 300s and less than 1800s
-- 🟨 At least 1800s worked in that hour and less than 3600s (and the hour is not fully filled)
-- 🟩 At least 3600s worked in that hour, or worked time spans the full length of that hour bucket (including shorter DST hours)
+- **Black** No work, or ≤300 seconds in that hour
+- **Red** More than 300s and less than 1800s
+- **Yellow** At least 1800s and less than 3600s (and not a full bucket)
+- **Green** At least 3600s, or worked across the full bucket length (including shorter DST hours)
+
+ANSI colors need a client that supports ansi code blocks (most desktop/web clients).
 
 ## Manual restore command (owner-only)
 Use `/restoreday` to restore historical time after data-loss incidents.

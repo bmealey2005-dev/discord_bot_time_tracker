@@ -137,22 +137,28 @@ def _progress_bar_blue(pct: float, *, width: int = 12) -> str:
     return (fill * filled) + (empty * (width - filled))
 
 
-def _hour_bucket_emoji(worked: int, bucket_span: int) -> str:
-    """Map worked seconds in a local hour bucket to a block emoji (guild-local heatmap)."""
+# Discord ```ansi``` blocks use monospace cells; emoji stay large in embeds, so hour bars use █ + SGR.
+_ANSI_ESC = "\u001b["
+_ANSI_BLK = "█"
+
+
+def _hour_bucket_ansi(worked: int, bucket_span: int) -> str:
+    """One narrow ANSI cell for an hour bucket (same thresholds as the original emoji scale)."""
     worked = max(0, int(worked))
     span = max(0, int(bucket_span))
+    r = f"{_ANSI_ESC}0m"
     if span <= 0 or worked == 0:
-        return "⬛"
+        return f"{_ANSI_ESC}40m{_ANSI_BLK}{r}"
     if worked >= span or worked >= 3600:
-        return "🟩"
+        return f"{_ANSI_ESC}42m{_ANSI_BLK}{r}"
     if worked >= 1800:
-        return "🟨"
+        return f"{_ANSI_ESC}43m{_ANSI_BLK}{r}"
     if worked > 300:
-        return "🟧"
-    return "⬛"
+        return f"{_ANSI_ESC}41m{_ANSI_BLK}{r}"
+    return f"{_ANSI_ESC}40m{_ANSI_BLK}{r}"
 
 
-def _hourly_day_bar_from_sessions(
+def _hourly_day_bar_ansi_from_sessions(
     *,
     ds: int,
     de: int,
@@ -160,12 +166,12 @@ def _hourly_day_bar_from_sessions(
     rows: list[Mapping[str, Any]],
     now_ts: int,
 ) -> str:
-    """24 emoji for local clock hours 0..23 on day [ds, de), from session rows."""
+    """24 monospace █ cells (ANSI bg colors) for local hours 0..23 on day [ds, de)."""
     midnight_local = datetime.fromtimestamp(int(ds), tz=timezone.utc).astimezone(tz)
     segments: list[tuple[int, int]] = []
-    for r in rows:
-        s = int(r["started_at"])
-        e = int(r["ended_at"]) if r["ended_at"] is not None else int(now_ts)
+    for row in rows:
+        s = int(row["started_at"])
+        e = int(row["ended_at"]) if row["ended_at"] is not None else int(now_ts)
         segments.append((s, e))
     parts: list[str] = []
     for h in range(24):
@@ -176,13 +182,13 @@ def _hourly_day_bar_from_sessions(
         b_start = max(seg_start_ts, int(ds))
         b_end = min(seg_end_ts, int(de))
         if b_start >= b_end:
-            parts.append(_hour_bucket_emoji(0, 0))
+            parts.append(_hour_bucket_ansi(0, 0))
             continue
-        span = b_end - b_start
+        bucket_span = b_end - b_start
         worked = 0
         for s, e in segments:
             worked += overlap_seconds(s, e, b_start, b_end)
-        parts.append(_hour_bucket_emoji(worked, span))
+        parts.append(_hour_bucket_ansi(worked, bucket_span))
     return "".join(parts)
 
 
@@ -223,8 +229,7 @@ def _hourly_user_blocks_to_description_pages(
 
 
 _HOURLY_EMBED_FOOTER = (
-    "Each day: 24 blocks (local hours 0–23). ⬛ none/≤300s 🟧 >300s & <1800s "
-    "🟨 ≥1800s & <3600s 🟩 ≥3600s or full bucket length."
+    "Hour bars use a monospace ANSI block (█): black ≤300s · red <1800s · yellow <3600s · green full or ≥3600s."
 )
 
 
@@ -1072,10 +1077,10 @@ class TimeTrackingCog(commands.Cog):
             rows = session_rows_by_user[b.user_id]
             day_lines: list[str] = []
             for di, (ds, de) in enumerate(day_windows):
-                bar = _hourly_day_bar_from_sessions(ds=ds, de=de, tz=tz, rows=rows, now_ts=now_ts)
-                # "-# " = Discord subtext (smaller); keeps 24 emoji bars on one line in most clients.
-                day_lines.append(f"-#     - {day_labels[di]}: {bar}")
-            blocks.append("\n".join([header, *day_lines]))
+                bar = _hourly_day_bar_ansi_from_sessions(ds=ds, de=de, tz=tz, rows=rows, now_ts=now_ts)
+                day_lines.append(f"{day_labels[di]}: {bar}")
+            ansi_body = "\n".join(day_lines)
+            blocks.append("\n".join([header, f"```ansi\n{ansi_body}\n```"]))
 
         # One ranked user per embed (after the first) so each description stays short. Discord often
         # clips long single descriptions in the client even when the API stores the full text.
