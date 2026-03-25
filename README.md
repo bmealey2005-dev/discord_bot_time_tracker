@@ -63,7 +63,7 @@ You can also set the timezone per server with `/settimezone` (recommended once y
 On Windows, the `tzdata` dependency is included so IANA timezones work consistently.
 
 ## Hourly activity heatmap (`/hourly-data`)
-Each weekday is **three lines** in the embed (guild-local time): a **bold** day name, a blank line, **12 emoji for hours 0–11**, then **12 emoji for hours 12–23**. Rows are not Markdown list items so Discord doesn’t reflow them onto one line.
+Each weekday is **three lines** (guild-local time): **bold** day name, then **12 emoji (0–11)** immediately below, then **12 emoji (12–23)**. A **blank line** separates one day’s PM row from the next day’s name. No Markdown list markers so Discord doesn’t reflow onto one line.
 
 - ⬛ No work, or ≤300 seconds in that hour
 - 🟧 More than 300s and less than 1800s

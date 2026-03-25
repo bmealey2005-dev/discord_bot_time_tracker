@@ -187,11 +187,10 @@ def _hourly_day_bar_from_sessions(
 
 
 def _hourly_weekday_am_pm_block(day_label: str, bar_24: str) -> str:
-    """Three visual rows: weekday, AM (h 0–11), PM (12–23). No markdown list (Discord folds those onto one line)."""
+    """Bold weekday, AM row (h 0–11), PM row (12–23). Caller joins days with double newlines for spacing after PM."""
     b = (bar_24 + ("⬛" * 24))[:24]
     am, pm = b[:12], b[12:]
-    # Blank line after the title so clients don't merge title + AM row.
-    return f"**{day_label}**\n\n{am}\n{pm}"
+    return f"**{day_label}**\n{am}\n{pm}"
 
 
 def _hourly_user_blocks_to_description_pages(
@@ -231,7 +230,7 @@ def _hourly_user_blocks_to_description_pages(
 
 
 _HOURLY_EMBED_FOOTER = (
-    "Per day: bold name + blank line + 12 emoji (hours 0–11) + 12 emoji (12–23), guild-local. "
+    "Per day: bold name, 12 emoji (0–11), 12 emoji (12–23); blank line between days. Guild-local. "
     "⬛ none/≤300s 🟧 >300s & <1800s 🟨 ≥1800s & <3600s 🟩 ≥3600s or full bucket."
 )
 
@@ -1082,7 +1081,7 @@ class TimeTrackingCog(commands.Cog):
             for di, (ds, de) in enumerate(day_windows):
                 bar = _hourly_day_bar_from_sessions(ds=ds, de=de, tz=tz, rows=rows, now_ts=now_ts)
                 day_lines.append(_hourly_weekday_am_pm_block(day_labels[di], bar))
-            blocks.append("\n".join([header, *day_lines]))
+            blocks.append("\n".join([header, "\n\n".join(day_lines)]))
 
         # One ranked user per embed (after the first) so each description stays short. Discord often
         # clips long single descriptions in the client even when the API stores the full text.
