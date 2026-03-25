@@ -2,7 +2,7 @@
 
 Small-team Discord bot for tracking hourly work sessions with weekly totals and optional report-channel posting.
 
-## Features
+## Features    
 - `/start [note]` start a work session (one active session per user per server)
 - `/stop` stop the active session and show session duration + current week total
 - `/status` show whether you're clocked in + elapsed time 

@@ -191,6 +191,24 @@ def _utf16_code_units(s: str) -> int:
     return max(0, len(s.encode("utf-16-le")) // 2)
 
 
+def _embed_field_snapshots(embed: discord.Embed) -> list[tuple[str | None, str, bool]]:
+    """Stable (name, value, inline) tuples for comparison (user heatmaps live in description, not fields)."""
+    out: list[tuple[str | None, str, bool]] = []
+    for i in range(len(embed.fields)):
+        f = embed.fields[i]
+        out.append((f.name, f.value or "", bool(f.inline)))
+    return out
+
+
+def _debug_print_field_line(prefix: str, i: int, name: str | None, value: str, inline: bool) -> None:
+    v = value.replace("\n", "\\n")
+    preview = v if len(v) <= 72 else v[:69] + "..."
+    print(
+        f"{prefix}  field[{i}] name={name!r} inline={inline} "
+        f"value_len_cp={len(value)} utf16={_utf16_code_units(value)} preview={preview!r}"
+    )
+
+
 def _debug_log_embed_vs_message(label: str, *, pre_embed: discord.Embed, message: discord.Message | None) -> None:
     """Print pre-send embed text vs the embed Discord attached to the sent message (stdout)."""
     pre_desc = pre_embed.description or ""
@@ -199,9 +217,9 @@ def _debug_log_embed_vs_message(label: str, *, pre_embed: discord.Embed, message
     print(f"  description: len_cp={len(pre_desc)} len_utf16={_utf16_code_units(pre_desc)}")
     print(f"  footer: len={len(getattr(pre_embed.footer, 'text', None) or '')}")
     print(f"  fields: {len(pre_embed.fields)} total_embed_len()={len(pre_embed)}")
-    for i, f in enumerate(pre_embed.fields):
-        v = f.value or ""
-        print(f"    [{i}] name_len={len(f.name)} value_len_cp={len(v)} value_utf16={_utf16_code_units(v)}")
+    for i in range(len(pre_embed.fields)):
+        f = pre_embed.fields[i]
+        _debug_print_field_line("  ", i, f.name, f.value or "", bool(f.inline))
 
     if message is None:
         print(f"[embed-debug:{label}] --- actual: NO MESSAGE (followup returned None) ---")
@@ -218,9 +236,22 @@ def _debug_log_embed_vs_message(label: str, *, pre_embed: discord.Embed, message
     print(f"  description: len_cp={len(post_desc)} len_utf16={_utf16_code_units(post_desc)}")
     print(f"  footer: len={len(getattr(post_e.footer, 'text', None) or '')}")
     print(f"  fields: {len(post_e.fields)}")
-    for i, f in enumerate(post_e.fields):
-        v = f.value or ""
-        print(f"    [{i}] name_len={len(f.name)} value_len_cp={len(v)} value_utf16={_utf16_code_units(v)}")
+    for i in range(len(post_e.fields)):
+        f = post_e.fields[i]
+        _debug_print_field_line("  ", i, f.name, f.value or "", bool(f.inline))
+
+    pre_fields = _embed_field_snapshots(pre_embed)
+    post_fields = _embed_field_snapshots(post_e)
+    if pre_fields == post_fields:
+        print(f"[embed-debug:{label}] --- fields: STRUCTURAL EXACT MATCH ({len(pre_fields)} fields) ---")
+    else:
+        print(f"[embed-debug:{label}] --- fields: STRUCTURAL MISMATCH pre={len(pre_fields)} post={len(post_fields)} ---")
+        maxlen = max(len(pre_fields), len(post_fields))
+        for i in range(maxlen):
+            pf = pre_fields[i] if i < len(pre_fields) else None
+            qf = post_fields[i] if i < len(post_fields) else None
+            if pf != qf:
+                print(f"  diff at index {i}: pre={pf!r} post={qf!r}")
 
     if pre_desc == post_desc:
         print(f"[embed-debug:{label}] --- description: EXACT MATCH ---")
@@ -243,6 +274,22 @@ def _debug_log_embed_vs_message(label: str, *, pre_embed: discord.Embed, message
         if len(pre_desc) > 200 and len(post_desc) > 200:
             print(f"  pre_suffix:  {pre_desc[-200:]!r}")
             print(f"  post_suffix: {post_desc[-200:]!r}")
+
+
+async def _defer_ephemeral_thinking(interaction: discord.Interaction, *, context: str) -> bool:
+    """Acknowledge the interaction within Discord's ~3s window, or log and return False."""
+    if interaction.response.is_done():
+        return True
+    try:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        return True
+    except discord.NotFound:
+        print(
+            f"[{context}] defer failed (404 Unknown interaction): first response must arrive within ~3s, "
+            f"or the token was invalidated (deploy/restart, duplicate ack, or client delay). "
+            f"command={getattr(interaction.command, 'name', None)!r}"
+        )
+        return False
 
 
 def _format_hours_compact(total_seconds: int) -> str:
@@ -1354,8 +1401,8 @@ class TimeTrackingCog(commands.Cog):
         # Give us time to query DB and (optionally) post in report channel.
         # If we're replacing an existing message (component interaction), don't defer;
         # we'll edit the message directly.
-        if not update_invoking_message and not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True, thinking=True)
+        if not update_invoking_message and not await _defer_ephemeral_thinking(interaction, context="leaderboard"):
+            return
 
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
@@ -1400,8 +1447,8 @@ class TimeTrackingCog(commands.Cog):
         assert interaction.guild is not None
         assert interaction.user is not None
 
-        if not update_invoking_message and not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True, thinking=True)
+        if not update_invoking_message and not await _defer_ephemeral_thinking(interaction, context="hourly-data"):
+            return
 
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
@@ -1659,7 +1706,8 @@ class TimeTrackingCog(commands.Cog):
             )
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        if not await _defer_ephemeral_thinking(interaction, context="testweeklyannouncement"):
+            return
 
         now_ts = int(time.time())
         embed = await self._build_leaderboard_embed(
@@ -1794,7 +1842,8 @@ class TimeTrackingCog(commands.Cog):
             await interaction.response.send_message("This command must be run in a text channel.", ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        if not await _defer_ephemeral_thinking(interaction, context="postpanel"):
+            return
 
         embed = discord.Embed(
             title="Time Tracker",
