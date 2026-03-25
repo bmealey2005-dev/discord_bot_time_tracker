@@ -186,6 +186,65 @@ def _hourly_day_bar_from_sessions(
     return "".join(parts)
 
 
+def _utf16_code_units(s: str) -> int:
+    """Length in UTF-16 code units (often matches how Discord counts string limits)."""
+    return max(0, len(s.encode("utf-16-le")) // 2)
+
+
+def _debug_log_embed_vs_message(label: str, *, pre_embed: discord.Embed, message: discord.Message | None) -> None:
+    """Print pre-send embed text vs the embed Discord attached to the sent message (stdout)."""
+    pre_desc = pre_embed.description or ""
+    print(f"[embed-debug:{label}] --- expected (Embed we sent) ---")
+    print(f"  title: len={len(pre_embed.title or '')} {pre_embed.title!r}")
+    print(f"  description: len_cp={len(pre_desc)} len_utf16={_utf16_code_units(pre_desc)}")
+    print(f"  footer: len={len(getattr(pre_embed.footer, 'text', None) or '')}")
+    print(f"  fields: {len(pre_embed.fields)} total_embed_len()={len(pre_embed)}")
+    for i, f in enumerate(pre_embed.fields):
+        v = f.value or ""
+        print(f"    [{i}] name_len={len(f.name)} value_len_cp={len(v)} value_utf16={_utf16_code_units(v)}")
+
+    if message is None:
+        print(f"[embed-debug:{label}] --- actual: NO MESSAGE (followup returned None) ---")
+        return
+
+    if not message.embeds:
+        print(f"[embed-debug:{label}] --- actual: message.embeds empty (id={message.id}) ---")
+        return
+
+    post_e = message.embeds[0]
+    post_desc = post_e.description or ""
+    print(f"[embed-debug:{label}] --- actual (message.embeds[0] id={message.id}) ---")
+    print(f"  title: len={len(post_e.title or '')} {post_e.title!r}")
+    print(f"  description: len_cp={len(post_desc)} len_utf16={_utf16_code_units(post_desc)}")
+    print(f"  footer: len={len(getattr(post_e.footer, 'text', None) or '')}")
+    print(f"  fields: {len(post_e.fields)}")
+    for i, f in enumerate(post_e.fields):
+        v = f.value or ""
+        print(f"    [{i}] name_len={len(f.name)} value_len_cp={len(v)} value_utf16={_utf16_code_units(v)}")
+
+    if pre_desc == post_desc:
+        print(f"[embed-debug:{label}] --- description: EXACT MATCH ---")
+    else:
+        print(f"[embed-debug:{label}] --- description: MISMATCH ---")
+        shorter = min(len(pre_desc), len(post_desc))
+        diff_at: int | None = None
+        for i in range(shorter):
+            if pre_desc[i] != post_desc[i]:
+                diff_at = i
+                break
+        if diff_at is None and len(pre_desc) != len(post_desc):
+            print(f"  prefix aligned; length pre={len(pre_desc)} post={len(post_desc)}")
+        elif diff_at is not None:
+            lo = max(0, diff_at - 40)
+            hi = min(len(pre_desc), diff_at + 40)
+            print(f"  first diff at codepoint {diff_at}")
+            print(f"  pre_slice:  {pre_desc[lo:hi]!r}")
+            print(f"  post_slice: {post_desc[lo:hi]!r}")
+        if len(pre_desc) > 200 and len(post_desc) > 200:
+            print(f"  pre_suffix:  {pre_desc[-200:]!r}")
+            print(f"  post_suffix: {post_desc[-200:]!r}")
+
+
 def _format_hours_compact(total_seconds: int) -> str:
     """Compact hours for per-day breakdown (no trailing 'h' to save space)."""
     total_seconds = max(0, int(total_seconds))
@@ -416,11 +475,13 @@ class TimeTrackingCog(commands.Cog):
         *,
         default_timezone: str,
         default_week_start: int,
+        debug_embed_compare: bool = False,
     ) -> None:
         self.bot = bot
         self.db = db
         self.default_timezone = default_timezone
         self.default_week_start = default_week_start
+        self.debug_embed_compare = debug_embed_compare
         self._panel_persistent_view = TimeTrackerPanelView(self)
         self._weekly_announcement_task: asyncio.Task[None] | None = None
 
@@ -1323,9 +1384,11 @@ class TimeTrackingCog(commands.Cog):
             return
 
         if posted_channel is not None:
-            await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
+            msg = await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
         else:
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        if self.debug_embed_compare:
+            _debug_log_embed_vs_message("leaderboard followup", pre_embed=embed, message=msg)
 
     async def _handle_hourly_data(
         self,
@@ -1368,9 +1431,11 @@ class TimeTrackingCog(commands.Cog):
             return
 
         if posted_channel is not None:
-            await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
+            msg = await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
         else:
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        if self.debug_embed_compare:
+            _debug_log_embed_vs_message("hourly-data followup", pre_embed=embed, message=msg)
 
     @app_commands.command(name="start", description="Start a work session timer.")
     @app_commands.describe(note="Optional note about what you're working on")
