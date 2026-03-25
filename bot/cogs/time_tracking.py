@@ -186,6 +186,48 @@ def _hourly_day_bar_from_sessions(
     return "".join(parts)
 
 
+def _hourly_user_blocks_to_description_pages(
+    blocks: list[str],
+    *,
+    max_chars: int = 4050,
+    max_pages: int = 10,
+) -> list[str]:
+    """Split full user heatmap blocks across Discord embed descriptions (4096 max each; stay under max_chars)."""
+    if not blocks:
+        return ["No sessions found for this week."]
+    pages: list[str] = []
+    i = 0
+    n = len(blocks)
+    while i < n:
+        if len(pages) >= max_pages:
+            break
+        cur: list[str] = []
+        while i < n:
+            b = blocks[i]
+            trial = "\n\n".join(cur + [b])
+            if cur and len(trial) > max_chars:
+                break
+            cur.append(b)
+            i += 1
+        pages.append("\n\n".join(cur))
+    if i < n:
+        omitted = n - i
+        note = f"\n\n… and {omitted} more user(s) not shown (max {max_pages} embed pages)."
+        last = pages[-1]
+        if len(last) + len(note) <= max_chars:
+            pages[-1] = last + note
+        else:
+            room = max(0, max_chars - len(note))
+            pages[-1] = (last[:room] if room > 0 else "") + note
+    return pages
+
+
+_HOURLY_EMBED_FOOTER = (
+    "Each day: 24 blocks (local hours 0–23). ⬛ none/≤300s 🟧 >300s & <1800s "
+    "🟨 ≥1800s & <3600s 🟩 ≥3600s or full bucket length."
+)
+
+
 def _utf16_code_units(s: str) -> int:
     """Length in UTF-16 code units (often matches how Discord counts string limits)."""
     return max(0, len(s.encode("utf-16-le")) // 2)
@@ -274,6 +316,46 @@ def _debug_log_embed_vs_message(label: str, *, pre_embed: discord.Embed, message
         if len(pre_desc) > 200 and len(post_desc) > 200:
             print(f"  pre_suffix:  {pre_desc[-200:]!r}")
             print(f"  post_suffix: {post_desc[-200:]!r}")
+
+
+def _debug_log_embeds_vs_message(
+    label: str, *, pre_embeds: list[discord.Embed], message: discord.Message | None
+) -> None:
+    """Compare a list of embeds we sent with message.embeds (e.g. /hourly-data followup)."""
+    print(f"[embed-debug:{label}] --- pre_embeds count={len(pre_embeds)} ---")
+    for ei, e in enumerate(pre_embeds):
+        d = e.description or ""
+        print(
+            f"  pre[{ei}] title={e.title!r} desc_len_cp={len(d)} desc_utf16={_utf16_code_units(d)} "
+            f"fields={len(e.fields)} total_len()={len(e)}"
+        )
+    if message is None:
+        print(f"[embed-debug:{label}] --- actual: NO MESSAGE ---")
+        return
+    print(f"[embed-debug:{label}] --- message.embeds count={len(message.embeds)} id={message.id} ---")
+    for ei, e in enumerate(message.embeds):
+        d = e.description or ""
+        print(
+            f"  post[{ei}] title={e.title!r} desc_len_cp={len(d)} desc_utf16={_utf16_code_units(d)} "
+            f"fields={len(e.fields)}"
+        )
+    if len(pre_embeds) != len(message.embeds):
+        print(f"[embed-debug:{label}] --- EMBED COUNT MISMATCH pre={len(pre_embeds)} post={len(message.embeds)} ---")
+    for ei, (pre_e, post_e) in enumerate(zip(pre_embeds, message.embeds)):
+        pd, qd = pre_e.description or "", post_e.description or ""
+        if pd == qd:
+            print(f"[embed-debug:{label}] embed[{ei}] description: EXACT MATCH")
+        else:
+            print(
+                f"[embed-debug:{label}] embed[{ei}] description: MISMATCH "
+                f"len pre={len(pd)} post={len(qd)}"
+            )
+        if ei == 0:
+            pf, qf = _embed_field_snapshots(pre_e), _embed_field_snapshots(post_e)
+            if pf == qf:
+                print(f"[embed-debug:{label}] embed[0] fields: STRUCTURAL EXACT MATCH ({len(pf)} fields)")
+            else:
+                print(f"[embed-debug:{label}] embed[0] fields: STRUCTURAL MISMATCH pre={pf!r} post={qf!r}")
 
 
 async def _defer_ephemeral_thinking(interaction: discord.Interaction, *, context: str) -> bool:
@@ -923,7 +1005,7 @@ class TimeTrackingCog(commands.Cog):
         embed.set_footer(text="Daily bullets show hours per day (week-local).")
         return embed
 
-    async def _build_hourly_data_embed(
+    async def _build_hourly_data_embeds(
         self,
         *,
         guild_id: int,
@@ -931,7 +1013,7 @@ class TimeTrackingCog(commands.Cog):
         tz_name: str,
         week_start: int,
         week_offset: int,
-    ) -> discord.Embed:
+    ) -> list[discord.Embed]:
         window = compute_week_window(
             now=_dt_from_ts(now_ts),
             tz_name=tz_name,
@@ -994,32 +1076,39 @@ class TimeTrackingCog(commands.Cog):
                 day_lines.append(f"    - {day_labels[di]}: {bar}")
             blocks.append("\n".join([header, *day_lines]))
 
-        joined = ""
-        kept = 0
-        for block in blocks:
-            candidate = (joined + ("\n\n" if joined else "") + block)
-            if len(candidate) > 3800:
-                break
-            joined = candidate
-            kept += 1
-        if kept < len(blocks):
-            joined += f"\n\n… and {len(blocks) - kept} more"
+        pages = _hourly_user_blocks_to_description_pages(blocks)
+        print(
+            f"[hourly-data embed] ranked_users={len(blocks)} description_pages={len(pages)} "
+            f"first_page_len_cp={len(pages[0]) if pages else 0}"
+        )
 
-        embed = discord.Embed(title="Weekly hourly activity", color=discord.Color.dark_magenta())
-        embed.add_field(name="Week window", value=f"<t:{window.start_ts}:D> → <t:{window.end_ts - 1}:D>", inline=False)
-        week_progress, week_ends = self._format_week_progress(
-            now_ts=now_ts,
-            window_start=window.start_ts,
-            window_end=window.end_ts,
-        )
-        embed.add_field(name="Week progress", value=f"{week_progress}\n{week_ends}", inline=False)
-        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=tz_name)
-        embed.add_field(name="Day progress", value=f"{day_progress}\n{day_ends}", inline=False)
-        embed.description = joined if joined else "No sessions found for this week."
-        embed.set_footer(
-            text="Each day: 24 blocks (local hours 0–23). ⬛ none/≤300s 🟧 >300s & <1800s 🟨 ≥1800s & <3600s 🟩 ≥3600s or full bucket length."
-        )
-        return embed
+        embeds: list[discord.Embed] = []
+        for pi, desc in enumerate(pages):
+            if pi == 0:
+                e = discord.Embed(title="Weekly hourly activity", color=discord.Color.dark_magenta())
+                e.add_field(
+                    name="Week window",
+                    value=f"<t:{window.start_ts}:D> → <t:{window.end_ts - 1}:D>",
+                    inline=False,
+                )
+                week_progress, week_ends = self._format_week_progress(
+                    now_ts=now_ts,
+                    window_start=window.start_ts,
+                    window_end=window.end_ts,
+                )
+                e.add_field(name="Week progress", value=f"{week_progress}\n{week_ends}", inline=False)
+                day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=tz_name)
+                e.add_field(name="Day progress", value=f"{day_progress}\n{day_ends}", inline=False)
+                e.description = desc
+                e.set_footer(text=_HOURLY_EMBED_FOOTER)
+            else:
+                e = discord.Embed(
+                    title="Weekly hourly activity (continued)",
+                    description=desc,
+                    color=discord.Color.dark_magenta(),
+                )
+            embeds.append(e)
+        return embeds
 
     async def _maybe_send_weekly_announcement(self) -> None:
         now_ts = int(time.time())
@@ -1105,8 +1194,15 @@ class TimeTrackingCog(commands.Cog):
         *,
         interaction: discord.Interaction,
         settings: dict[str, Any],
-        embed: discord.Embed,
+        embed: discord.Embed | None = None,
+        embeds: list[discord.Embed] | None = None,
     ) -> discord.abc.MessageableChannel | None:
+        if embed is not None and embeds is not None:
+            raise TypeError("Pass only one of embed or embeds")
+        if embed is None and not embeds:
+            return None
+        to_send = list(embeds) if embeds is not None else [embed]
+
         channel_id = settings.get("report_channel_id")
         if not channel_id or interaction.guild is None:
             return None
@@ -1122,7 +1218,7 @@ class TimeTrackingCog(commands.Cog):
             return None
 
         try:
-            await channel.send(embed=embed)
+            await channel.send(embeds=to_send[:10])
             return channel
         except discord.Forbidden:
             return None
@@ -1452,7 +1548,7 @@ class TimeTrackingCog(commands.Cog):
 
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
-        embed = await self._build_hourly_data_embed(
+        embeds = await self._build_hourly_data_embeds(
             guild_id=interaction.guild.id,
             now_ts=now_ts,
             tz_name=settings["timezone"],
@@ -1466,19 +1562,21 @@ class TimeTrackingCog(commands.Cog):
         posted_channel = await self._maybe_post_to_report_channel(
             interaction=interaction,
             settings=settings,
-            embed=embed,
+            embeds=embeds,
         )
         content = f"Posted hourly activity in {posted_channel.mention}." if posted_channel is not None else None
 
+        send_embeds = embeds[:10]
+
         if update_invoking_message and interaction.message is not None and not interaction.response.is_done():
-            await interaction.response.edit_message(content=content, embed=embed, view=view)
+            await interaction.response.edit_message(content=content, embeds=send_embeds, view=view)
             return
 
         if posted_channel is not None:
-            msg = await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
+            msg = await interaction.followup.send(content=content, embeds=send_embeds, view=view, ephemeral=True)
         else:
-            msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        _debug_log_embed_vs_message("hourly-data followup", pre_embed=embed, message=msg)
+            msg = await interaction.followup.send(embeds=send_embeds, view=view, ephemeral=True)
+        _debug_log_embeds_vs_message("hourly-data followup", pre_embeds=send_embeds, message=msg)
 
     @app_commands.command(name="start", description="Start a work session timer.")
     @app_commands.describe(note="Optional note about what you're working on")
