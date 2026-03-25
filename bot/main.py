@@ -27,7 +27,6 @@ class TimeTrackerBot(commands.Bot):
             self.db,
             default_timezone=self.config.default_timezone,
             default_week_start=self.config.default_week_start,
-            debug_embed_compare=self.config.debug_embed_compare,
         )
         await self.add_cog(cog)
         # Register persistent button handlers (works for already-posted panel messages).

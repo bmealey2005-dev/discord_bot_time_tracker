@@ -13,7 +13,6 @@ class Config:
     clear_guild_commands_id: int | None
     database_url: str | None
     db_path: str
-    debug_embed_compare: bool
 
 
 def _parse_int(name: str, raw: str | None, *, default: int) -> int:
@@ -70,9 +69,6 @@ def load_config() -> Config:
     default_db_path = "/data/time_tracker.sqlite3" if _is_running_on_railway() else "./data/time_tracker.sqlite3"
     db_path = os.getenv("DB_PATH", default_db_path).strip() or default_db_path
 
-    debug_raw = (os.getenv("DEBUG_EMBED_COMPARE") or "").strip().lower()
-    debug_embed_compare = debug_raw in ("1", "true", "yes", "on")
-
     return Config(
         discord_token=token,
         default_timezone=default_timezone,
@@ -81,6 +77,5 @@ def load_config() -> Config:
         clear_guild_commands_id=clear_guild_commands_id,
         database_url=database_url,
         db_path=db_path,
-        debug_embed_compare=debug_embed_compare,
     )
 

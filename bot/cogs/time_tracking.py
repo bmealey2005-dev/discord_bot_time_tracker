@@ -475,13 +475,11 @@ class TimeTrackingCog(commands.Cog):
         *,
         default_timezone: str,
         default_week_start: int,
-        debug_embed_compare: bool = False,
     ) -> None:
         self.bot = bot
         self.db = db
         self.default_timezone = default_timezone
         self.default_week_start = default_week_start
-        self.debug_embed_compare = debug_embed_compare
         self._panel_persistent_view = TimeTrackerPanelView(self)
         self._weekly_announcement_task: asyncio.Task[None] | None = None
 
@@ -1387,8 +1385,7 @@ class TimeTrackingCog(commands.Cog):
             msg = await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
         else:
             msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        if self.debug_embed_compare:
-            _debug_log_embed_vs_message("leaderboard followup", pre_embed=embed, message=msg)
+        _debug_log_embed_vs_message("leaderboard followup", pre_embed=embed, message=msg)
 
     async def _handle_hourly_data(
         self,
@@ -1434,8 +1431,7 @@ class TimeTrackingCog(commands.Cog):
             msg = await interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
         else:
             msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        if self.debug_embed_compare:
-            _debug_log_embed_vs_message("hourly-data followup", pre_embed=embed, message=msg)
+        _debug_log_embed_vs_message("hourly-data followup", pre_embed=embed, message=msg)
 
     @app_commands.command(name="start", description="Start a work session timer.")
     @app_commands.describe(note="Optional note about what you're working on")
