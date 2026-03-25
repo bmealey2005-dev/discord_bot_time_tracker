@@ -1076,38 +1076,56 @@ class TimeTrackingCog(commands.Cog):
                 day_lines.append(f"    - {day_labels[di]}: {bar}")
             blocks.append("\n".join([header, *day_lines]))
 
-        pages = _hourly_user_blocks_to_description_pages(blocks)
-        print(
-            f"[hourly-data embed] ranked_users={len(blocks)} description_pages={len(pages)} "
-            f"first_page_len_cp={len(pages[0]) if pages else 0}"
-        )
-
+        # One ranked user per embed (after the first) so each description stays short. Discord often
+        # clips long single descriptions in the client even when the API stores the full text.
         embeds: list[discord.Embed] = []
-        for pi, desc in enumerate(pages):
-            if pi == 0:
-                e = discord.Embed(title="Weekly hourly activity", color=discord.Color.dark_magenta())
-                e.add_field(
-                    name="Week window",
-                    value=f"<t:{window.start_ts}:D> → <t:{window.end_ts - 1}:D>",
-                    inline=False,
-                )
-                week_progress, week_ends = self._format_week_progress(
-                    now_ts=now_ts,
-                    window_start=window.start_ts,
-                    window_end=window.end_ts,
-                )
-                e.add_field(name="Week progress", value=f"{week_progress}\n{week_ends}", inline=False)
-                day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=tz_name)
-                e.add_field(name="Day progress", value=f"{day_progress}\n{day_ends}", inline=False)
-                e.description = desc
-                e.set_footer(text=_HOURLY_EMBED_FOOTER)
-            else:
-                e = discord.Embed(
-                    title="Weekly hourly activity (continued)",
-                    description=desc,
+        e0 = discord.Embed(title="Weekly hourly activity", color=discord.Color.dark_magenta())
+        e0.add_field(
+            name="Week window",
+            value=f"<t:{window.start_ts}:D> → <t:{window.end_ts - 1}:D>",
+            inline=False,
+        )
+        week_progress, week_ends = self._format_week_progress(
+            now_ts=now_ts,
+            window_start=window.start_ts,
+            window_end=window.end_ts,
+        )
+        e0.add_field(name="Week progress", value=f"{week_progress}\n{week_ends}", inline=False)
+        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=tz_name)
+        e0.add_field(name="Day progress", value=f"{day_progress}\n{day_ends}", inline=False)
+        if blocks:
+            e0.description = blocks[0]
+        else:
+            e0.description = "No sessions found for this week."
+        e0.set_footer(text=_HOURLY_EMBED_FOOTER)
+        embeds.append(e0)
+
+        # Users 2–9: own embed (title shortened; full line with mention is in description).
+        for idx in range(1, min(len(blocks), 9)):
+            b = breakdowns[idx]
+            e = discord.Embed(
+                title=f"{idx + 1}. {_format_duration(b.week_total_seconds)}",
+                description=blocks[idx],
+                color=discord.Color.dark_magenta(),
+            )
+            embeds.append(e)
+
+        # Users 10+: pack into last embed (max 10 embeds per message).
+        if len(blocks) > 9:
+            tail_pages = _hourly_user_blocks_to_description_pages(blocks[9:], max_pages=1)
+            tail_desc = tail_pages[0] if tail_pages else ""
+            embeds.append(
+                discord.Embed(
+                    title="Weekly hourly activity · more users",
+                    description=tail_desc,
                     color=discord.Color.dark_magenta(),
                 )
-            embeds.append(e)
+            )
+
+        print(
+            f"[hourly-data embed] ranked_users={len(blocks)} embeds_used={len(embeds)} "
+            f"first_desc_len_cp={len(embeds[0].description or '')}"
+        )
         return embeds
 
     async def _maybe_send_weekly_announcement(self) -> None:

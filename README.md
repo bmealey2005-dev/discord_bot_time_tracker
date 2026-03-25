@@ -8,7 +8,7 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/status` show whether you're clocked in + elapsed time 
 - `/report [user] [week_offset]` weekly total for a specific user (defaults to you) 
 - `/leaderboard [week_offset]` weekly totals for everyone with sessions
-- `/hourly-data [week_offset]` weekly heatmap: 24 blocks per day (guild-local hours 0–23) per user; uses the same week and report-channel behavior as `/leaderboard` (splits across multiple embeds when needed, up to Discord’s limit of 10 per message)
+- `/hourly-data [week_offset]` weekly heatmap: 24 blocks per day (guild-local hours 0–23) per user; uses the same week and report-channel behavior as `/leaderboard`. Each user after the first gets their own embed so clients don’t clip long descriptions; users 10+ share the last embed (up to 10 embeds per message)
 - `/setreportchannel [channel]` (Manage Server/Admin) set the channel to post reports/leaderboards
 - `/postpanel` (Manage Server/Admin) post a persistent button panel (Start/Stop/Status) in the current channel
 - `/restoreday user week_offset weekday seconds` owner-only data restore tool (user id `761895875361505281`)
