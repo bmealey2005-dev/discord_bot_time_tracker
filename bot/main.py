@@ -7,7 +7,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from bot.config import Config, load_config
-from bot.cogs.time_tracking import TimeTrackingCog
+from bot.cogs.time_tracking import REQUIRED_COMMAND_ROLE_IDS, TimeTrackingCog
 from bot.db import Database
 
 
@@ -46,6 +46,68 @@ class TimeTrackerBot(commands.Bot):
             await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
+        await self._sync_dev_guild_command_permissions()
+
+    async def _sync_dev_guild_command_permissions(self) -> None:
+        if self.config.dev_guild_id is None:
+            print("Skipping role-lock command visibility sync: DEV_GUILD_ID is not configured.")
+            return
+
+        if self.application_id is None:
+            print("Skipping role-lock command visibility sync: application_id is unavailable.")
+            return
+
+        guild_id = int(self.config.dev_guild_id)
+        guild = discord.Object(id=guild_id)
+        try:
+            guild_commands = await self.tree.fetch_commands(guild=guild)
+        except discord.HTTPException as exc:
+            print(f"Failed to fetch guild commands for permission sync: {exc!r}")
+            return
+
+        if not guild_commands:
+            print(f"No guild commands found for role-lock visibility sync in guild {guild_id}.")
+            return
+
+        permissions: list[dict[str, int | bool]] = [
+            {
+                "id": guild_id,
+                "type": int(discord.AppCommandPermissionType.role.value),
+                "permission": False,
+            }
+        ]
+        seen_ids = {guild_id}
+        for role_id in REQUIRED_COMMAND_ROLE_IDS:
+            role_id = int(role_id)
+            if role_id in seen_ids:
+                continue
+            seen_ids.add(role_id)
+            permissions.append(
+                {
+                    "id": role_id,
+                    "type": int(discord.AppCommandPermissionType.role.value),
+                    "permission": True,
+                }
+            )
+
+        payload = {"permissions": permissions}
+        updated = 0
+        for command in guild_commands:
+            try:
+                await self.http.edit_application_command_permissions(
+                    application_id=self.application_id,
+                    guild_id=guild_id,
+                    command_id=command.id,
+                    payload=payload,
+                )
+                updated += 1
+            except discord.HTTPException as exc:
+                print(f"Failed to sync command permissions for '{command.name}' ({command.id}): {exc!r}")
+
+        print(
+            f"Applied role-lock command visibility permissions to {updated}/{len(guild_commands)} "
+            f"guild commands in guild {guild_id}."
+        )
 
     async def close(self) -> None:
         try:

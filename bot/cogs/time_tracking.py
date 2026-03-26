@@ -39,6 +39,11 @@ PAYMENT_DEVELOPER_USER_IDS: tuple[int, ...] = (
     434418013916233755,
     656182155311054858,
 )
+REQUIRED_COMMAND_ROLE_IDS: tuple[int, ...] = (
+    1468691610899321029,
+    1470609632132202526,
+    1479224753792221234,
+)
 DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR: tuple[tuple[int, int], ...] = (
     (0, 3000),
     (10, 3300), 
@@ -965,6 +970,32 @@ class TimeTrackingCog(commands.Cog):
             return False
         return True
 
+    def _member_has_required_role(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild is None or interaction.user is None:
+            return False
+
+        member: discord.Member | None
+        if isinstance(interaction.user, discord.Member):
+            member = interaction.user
+        else:
+            member = interaction.guild.get_member(interaction.user.id)
+        if member is None:
+            return False
+
+        required_roles = set(REQUIRED_COMMAND_ROLE_IDS)
+        return any(int(role.id) in required_roles for role in member.roles)
+
+    async def _require_required_role(self, interaction: discord.Interaction) -> bool:
+        if self._member_has_required_role(interaction):
+            return True
+
+        msg = "You are not allowed to use this bot in this server."
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+        return False
+
     async def _require_manage_server(self, interaction: discord.Interaction) -> bool:
         assert interaction.user is not None
         perms = interaction.user.guild_permissions
@@ -1276,6 +1307,8 @@ class TimeTrackingCog(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         if interaction.user is None:
             return []
+        if not self._member_has_required_role(interaction):
+            return []
 
         now_ts = int(time.time())
         tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
@@ -1299,6 +1332,8 @@ class TimeTrackingCog(commands.Cog):
         command_name: str,
     ) -> None:
         if not await self._require_guild(interaction):
+            return
+        if not await self._require_required_role(interaction):
             return
 
         assert interaction.guild is not None
@@ -2262,6 +2297,8 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_required_role(interaction):
+            return
 
         assert interaction.guild is not None
         assert interaction.user is not None
@@ -2368,6 +2405,8 @@ class TimeTrackingCog(commands.Cog):
         allow_offline_flag_bypass: bool = False,
     ) -> None:
         if not await self._require_guild(interaction):
+            return
+        if not await self._require_required_role(interaction):
             return
 
         assert interaction.guild is not None
@@ -2499,6 +2538,8 @@ class TimeTrackingCog(commands.Cog):
     async def _handle_status(self, interaction: discord.Interaction, *, update_invoking_message: bool = False) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_required_role(interaction):
+            return
 
         assert interaction.guild is not None
         assert interaction.user is not None
@@ -2594,6 +2635,8 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_required_role(interaction):
+            return
 
         assert interaction.guild is not None
         assert interaction.user is not None
@@ -2643,6 +2686,8 @@ class TimeTrackingCog(commands.Cog):
         update_invoking_message: bool = False,
     ) -> None:
         if not await self._require_guild(interaction):
+            return
+        if not await self._require_required_role(interaction):
             return
 
         assert interaction.guild is not None
@@ -2701,6 +2746,8 @@ class TimeTrackingCog(commands.Cog):
     async def help(self, interaction: discord.Interaction) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_required_role(interaction):
+            return
 
         embed = discord.Embed(
             title="Time-Logging bot commands",
@@ -2724,6 +2771,8 @@ class TimeTrackingCog(commands.Cog):
         week_offset: app_commands.Range[int, -52, 52] = 0,
     ) -> None:
         if not await self._require_guild(interaction):
+            return
+        if not await self._require_required_role(interaction):
             return
         if not await self._require_restore_owner(interaction):
             return
@@ -2865,6 +2914,8 @@ class TimeTrackingCog(commands.Cog):
     async def payment_data(self, interaction: discord.Interaction) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_required_role(interaction):
+            return
         if not await self._require_restore_owner(interaction):
             return
 
@@ -2988,6 +3039,8 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_required_role(interaction):
+            return
         if not await self._require_restore_owner(interaction):
             return
 
@@ -3080,6 +3133,8 @@ class TimeTrackingCog(commands.Cog):
     async def testweeklyannouncement(self, interaction: discord.Interaction) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_required_role(interaction):
+            return
         if not await self._require_restore_owner(interaction):
             return
 
@@ -3138,6 +3193,8 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_required_role(interaction):
+            return
         if not await self._require_restore_owner(interaction):
             return
 
@@ -3159,6 +3216,8 @@ class TimeTrackingCog(commands.Cog):
     async def setclockedinrole(self, interaction: discord.Interaction, role: discord.Role | None = None) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_required_role(interaction):
+            return
         if not await self._require_restore_owner(interaction):
             return
 
@@ -3178,6 +3237,8 @@ class TimeTrackingCog(commands.Cog):
     async def setnicknamehours(self, interaction: discord.Interaction, enabled: bool) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_required_role(interaction):
+            return
         if not await self._require_restore_owner(interaction):
             return
 
@@ -3192,6 +3253,8 @@ class TimeTrackingCog(commands.Cog):
     @app_commands.command(name="postpanel", description="Post a persistent Start/Stop/Status button panel in this channel.")
     async def postpanel(self, interaction: discord.Interaction) -> None:
         if not await self._require_guild(interaction):
+            return
+        if not await self._require_required_role(interaction):
             return
         if not await self._require_restore_owner(interaction):
             return
