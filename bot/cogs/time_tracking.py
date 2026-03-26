@@ -84,15 +84,29 @@ def _format_duration(total_seconds: int) -> str:
     return f"{seconds}s"
 
 
-def _format_offline_trim_button_label(*, offline_started_at: int, now_ts: int) -> str:
-    trim_seconds = max(0, int(now_ts) - int(offline_started_at))
-    label = f"Exclude offline time ({_format_duration(trim_seconds)})"
-    # Discord button labels have a max length of 80.
-    if len(label) <= 80:
-        return label
-    compact = _format_hours_minutes(trim_seconds)
-    fallback = f"Exclude offline time ({compact})"
-    return fallback if len(fallback) <= 80 else "Exclude offline time"
+def _format_offline_resolution_button_labels(
+    *,
+    session_started_at: int,
+    offline_started_at: int,
+    now_ts: int,
+) -> tuple[str, str]:
+    _, _, time_offline = _compute_offline_time_breakdown(
+        session_started_at=session_started_at,
+        offline_started_at=offline_started_at,
+        now_ts=now_ts,
+    )
+    offline_text = _format_duration(time_offline)
+    include_label = f"Include offline time (+{offline_text})"
+    exclude_label = f"Exclude offline time (-{offline_text})"
+    if len(include_label) <= 80 and len(exclude_label) <= 80:
+        return include_label, exclude_label
+
+    compact = _format_hours_minutes(time_offline)
+    include_fallback = f"Include offline time (+{compact})"
+    exclude_fallback = f"Exclude offline time (-{compact})"
+    if len(include_fallback) <= 80 and len(exclude_fallback) <= 80:
+        return include_fallback, exclude_fallback
+    return "Include offline time", "Exclude offline time"
 
 
 def _compute_offline_time_breakdown(
@@ -734,6 +748,7 @@ class OfflineReturnPromptView(discord.ui.View):
         *,
         user_id: int,
         session_id: int,
+        session_started_at: int,
         offline_started_at: int,
         now_ts: int,
     ) -> None:
@@ -741,17 +756,20 @@ class OfflineReturnPromptView(discord.ui.View):
         self.cog = cog
         self.user_id = int(user_id)
         self.session_id = int(session_id)
+        self.session_started_at = int(session_started_at)
         self.offline_started_at = int(offline_started_at)
+        include_label, exclude_label = _format_offline_resolution_button_labels(
+            session_started_at=self.session_started_at,
+            offline_started_at=self.offline_started_at,
+            now_ts=int(now_ts),
+        )
 
-        continue_btn = discord.ui.Button(label="Continue session", style=discord.ButtonStyle.success)
+        continue_btn = discord.ui.Button(label=include_label, style=discord.ButtonStyle.success)
         continue_btn.callback = self._button_continue  # type: ignore[assignment]
         self.add_item(continue_btn)
 
         trim_btn = discord.ui.Button(
-            label=_format_offline_trim_button_label(
-                offline_started_at=self.offline_started_at,
-                now_ts=int(now_ts),
-            ),
+            label=exclude_label,
             style=discord.ButtonStyle.danger,
         )
         trim_btn.callback = self._button_trim  # type: ignore[assignment]
@@ -788,6 +806,7 @@ class OfflineStopDecisionView(discord.ui.View):
         *,
         user_id: int,
         session_id: int,
+        session_started_at: int,
         offline_started_at: int,
         now_ts: int,
     ) -> None:
@@ -795,17 +814,20 @@ class OfflineStopDecisionView(discord.ui.View):
         self.cog = cog
         self.user_id = int(user_id)
         self.session_id = int(session_id)
+        self.session_started_at = int(session_started_at)
         self.offline_started_at = int(offline_started_at)
+        include_label, exclude_label = _format_offline_resolution_button_labels(
+            session_started_at=self.session_started_at,
+            offline_started_at=self.offline_started_at,
+            now_ts=int(now_ts),
+        )
 
-        stop_now_btn = discord.ui.Button(label="Stop session now", style=discord.ButtonStyle.danger)
+        stop_now_btn = discord.ui.Button(label=include_label, style=discord.ButtonStyle.danger)
         stop_now_btn.callback = self._button_stop_now  # type: ignore[assignment]
         self.add_item(stop_now_btn)
 
         trim_btn = discord.ui.Button(
-            label=_format_offline_trim_button_label(
-                offline_started_at=self.offline_started_at,
-                now_ts=int(now_ts),
-            ),
+            label=exclude_label,
             style=discord.ButtonStyle.secondary,
         )
         trim_btn.callback = self._button_trim_offline  # type: ignore[assignment]
@@ -1826,6 +1848,7 @@ class TimeTrackingCog(commands.Cog):
             self,
             user_id=member.id,
             session_id=int(session_id),
+            session_started_at=session_started_at,
             offline_started_at=offline_started_at,
             now_ts=now_ts,
         )
@@ -2327,6 +2350,7 @@ class TimeTrackingCog(commands.Cog):
                 self,
                 user_id=interaction.user.id,
                 session_id=int(active["id"]),
+                session_started_at=session_started_at,
                 offline_started_at=offline_started_at,
                 now_ts=now_ts,
             )
