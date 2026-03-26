@@ -116,6 +116,23 @@ class Database:
               PRIMARY KEY(channel_id, week_start_ts)
             );
             """,
+            """
+            CREATE TABLE IF NOT EXISTS session_offline_flags (
+              guild_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              session_id BIGINT NOT NULL,
+              offline_started_at BIGINT NOT NULL,
+              prompt_message_id TEXT NULL,
+              prompted_at BIGINT NULL,
+              resolved_at BIGINT NULL,
+              PRIMARY KEY(guild_id, user_id)
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_session_offline_flags_unresolved
+              ON session_offline_flags(guild_id, user_id, session_id)
+              WHERE resolved_at IS NULL;
+            """,
             "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS panel_channel_id TEXT NULL;",
             "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS panel_message_id TEXT NULL;",
             "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clocked_in_role_id TEXT NULL;",
@@ -156,6 +173,27 @@ class Database:
               posted_at_ts INTEGER NOT NULL,
               PRIMARY KEY(channel_id, week_start_ts)
             );
+            """
+        )
+        await self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS session_offline_flags (
+              guild_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              session_id INTEGER NOT NULL,
+              offline_started_at INTEGER NOT NULL,
+              prompt_message_id TEXT NULL,
+              prompted_at INTEGER NULL,
+              resolved_at INTEGER NULL,
+              PRIMARY KEY(guild_id, user_id)
+            );
+            """
+        )
+        await self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_session_offline_flags_unresolved
+              ON session_offline_flags(guild_id, user_id, session_id)
+              WHERE resolved_at IS NULL;
             """
         )
 
@@ -452,6 +490,286 @@ class Database:
             (str(channel_id), int(week_start_ts), int(posted_at_ts)),
         )
         await self._conn.commit()
+
+    async def get_session_offline_flag(self, *, guild_id: int, user_id: int) -> Mapping[str, Any] | None:
+        if self._is_postgres:
+            if self._pool is None:
+                raise RuntimeError("Database.connect() must be called first.")
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                    FROM session_offline_flags
+                    WHERE guild_id = $1 AND user_id = $2;
+                    """,
+                    str(guild_id),
+                    str(user_id),
+                )
+                return row
+
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called first.")
+
+        cur = await self._conn.execute(
+            """
+            SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+            FROM session_offline_flags
+            WHERE guild_id = ? AND user_id = ?;
+            """,
+            (str(guild_id), str(user_id)),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return self._sqlite_row_to_dict(row)
+
+    async def upsert_session_offline_flag(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        session_id: int,
+        offline_started_at: int,
+    ) -> None:
+        if self._is_postgres:
+            if self._pool is None:
+                raise RuntimeError("Database.connect() must be called first.")
+            async with self._pool.acquire() as conn:
+                async with conn.transaction():
+                    existing = await conn.fetchrow(
+                        """
+                        SELECT session_id, offline_started_at, resolved_at
+                        FROM session_offline_flags
+                        WHERE guild_id = $1 AND user_id = $2
+                        FOR UPDATE;
+                        """,
+                        str(guild_id),
+                        str(user_id),
+                    )
+                    if existing is None:
+                        await conn.execute(
+                            """
+                            INSERT INTO session_offline_flags(
+                                guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                            )
+                            VALUES($1, $2, $3, $4, NULL, NULL, NULL);
+                            """,
+                            str(guild_id),
+                            str(user_id),
+                            int(session_id),
+                            int(offline_started_at),
+                        )
+                        return
+
+                    if existing["resolved_at"] is None and int(existing["session_id"]) == int(session_id):
+                        # Existing unresolved marker for the same active session: keep original detection.
+                        return
+
+                    await conn.execute(
+                        """
+                        UPDATE session_offline_flags
+                        SET session_id = $1,
+                            offline_started_at = $2,
+                            prompt_message_id = NULL,
+                            prompted_at = NULL,
+                            resolved_at = NULL
+                        WHERE guild_id = $3 AND user_id = $4;
+                        """,
+                        int(session_id),
+                        int(offline_started_at),
+                        str(guild_id),
+                        str(user_id),
+                    )
+            return
+
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called first.")
+
+        await self._conn.execute("BEGIN IMMEDIATE;")
+        try:
+            cur = await self._conn.execute(
+                """
+                SELECT session_id, offline_started_at, resolved_at
+                FROM session_offline_flags
+                WHERE guild_id = ? AND user_id = ?;
+                """,
+                (str(guild_id), str(user_id)),
+            )
+            existing = await cur.fetchone()
+            if existing is None:
+                await self._conn.execute(
+                    """
+                    INSERT INTO session_offline_flags(
+                        guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                    )
+                    VALUES(?, ?, ?, ?, NULL, NULL, NULL);
+                    """,
+                    (str(guild_id), str(user_id), int(session_id), int(offline_started_at)),
+                )
+                await self._conn.commit()
+                return
+
+            if existing["resolved_at"] is None and int(existing["session_id"]) == int(session_id):
+                await self._conn.commit()
+                return
+
+            await self._conn.execute(
+                """
+                UPDATE session_offline_flags
+                SET session_id = ?,
+                    offline_started_at = ?,
+                    prompt_message_id = NULL,
+                    prompted_at = NULL,
+                    resolved_at = NULL
+                WHERE guild_id = ? AND user_id = ?;
+                """,
+                (int(session_id), int(offline_started_at), str(guild_id), str(user_id)),
+            )
+            await self._conn.commit()
+        except Exception:
+            await self._conn.rollback()
+            raise
+
+    async def mark_session_offline_flag_prompted(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        session_id: int,
+        prompt_message_id: int,
+        prompted_at: int,
+    ) -> None:
+        if self._is_postgres:
+            if self._pool is None:
+                raise RuntimeError("Database.connect() must be called first.")
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE session_offline_flags
+                    SET prompt_message_id = $1,
+                        prompted_at = $2
+                    WHERE guild_id = $3
+                      AND user_id = $4
+                      AND session_id = $5
+                      AND resolved_at IS NULL;
+                    """,
+                    str(prompt_message_id),
+                    int(prompted_at),
+                    str(guild_id),
+                    str(user_id),
+                    int(session_id),
+                )
+            return
+
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called first.")
+
+        await self._conn.execute(
+            """
+            UPDATE session_offline_flags
+            SET prompt_message_id = ?,
+                prompted_at = ?
+            WHERE guild_id = ?
+              AND user_id = ?
+              AND session_id = ?
+              AND resolved_at IS NULL;
+            """,
+            (str(prompt_message_id), int(prompted_at), str(guild_id), str(user_id), int(session_id)),
+        )
+        await self._conn.commit()
+
+    async def resolve_session_offline_flag(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        session_id: int,
+        resolved_at: int,
+    ) -> None:
+        if self._is_postgres:
+            if self._pool is None:
+                raise RuntimeError("Database.connect() must be called first.")
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE session_offline_flags
+                    SET resolved_at = $1
+                    WHERE guild_id = $2
+                      AND user_id = $3
+                      AND session_id = $4
+                      AND resolved_at IS NULL;
+                    """,
+                    int(resolved_at),
+                    str(guild_id),
+                    str(user_id),
+                    int(session_id),
+                )
+            return
+
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called first.")
+
+        await self._conn.execute(
+            """
+            UPDATE session_offline_flags
+            SET resolved_at = ?
+            WHERE guild_id = ?
+              AND user_id = ?
+              AND session_id = ?
+              AND resolved_at IS NULL;
+            """,
+            (int(resolved_at), str(guild_id), str(user_id), int(session_id)),
+        )
+        await self._conn.commit()
+
+    async def list_unresolved_session_offline_flags(self, *, guild_id: int | None = None) -> list[Mapping[str, Any]]:
+        if self._is_postgres:
+            if self._pool is None:
+                raise RuntimeError("Database.connect() must be called first.")
+            async with self._pool.acquire() as conn:
+                if guild_id is None:
+                    rows = await conn.fetch(
+                        """
+                        SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                        FROM session_offline_flags
+                        WHERE resolved_at IS NULL;
+                        """
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                        FROM session_offline_flags
+                        WHERE guild_id = $1
+                          AND resolved_at IS NULL;
+                        """,
+                        str(guild_id),
+                    )
+                return list(rows)
+
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called first.")
+
+        if guild_id is None:
+            cur = await self._conn.execute(
+                """
+                SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                FROM session_offline_flags
+                WHERE resolved_at IS NULL;
+                """
+            )
+        else:
+            cur = await self._conn.execute(
+                """
+                SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                FROM session_offline_flags
+                WHERE guild_id = ?
+                  AND resolved_at IS NULL;
+                """,
+                (str(guild_id),),
+            )
+        rows = await cur.fetchall()
+        return [self._sqlite_row_to_dict(r) for r in rows]
 
     async def get_active_session(self, *, guild_id: int, user_id: int) -> Mapping[str, Any] | None:
         if self._is_postgres:

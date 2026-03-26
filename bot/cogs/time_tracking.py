@@ -18,6 +18,7 @@ from bot.db import Database
 from bot.time_windows import compute_week_window, overlap_seconds
 
 RESTORE_OWNER_USER_ID = 761895875361505281
+OFFLINE_RETURN_PROMPT_CHANNEL_ID = 1475250429926572112
 WEEKDAY_MON_INDEX = {
     "monday": 0,
     "tuesday": 1,
@@ -39,7 +40,7 @@ PAYMENT_DEVELOPER_USER_IDS: tuple[int, ...] = (
 )
 DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR: tuple[tuple[int, int], ...] = (
     (0, 3000),
-    (10, 3300),
+    (10, 3300), 
     (20, 3600),
     (30, 4000),
     (40, 4500),
@@ -51,13 +52,14 @@ PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
     434418013916233755: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
 }
 USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
-    1014149760204156938: "UTC+0",
-    629991962522681365: "UTC+1",
-    434418013916233755: "UTC+1", 
-    761895875361505281: "UTC-6",
+    1014149760204156938: "UTC+0", # Alex
+    629991962522681365: "UTC+1", # Wharkk
+    434418013916233755: "UTC+1",  # Yandere
+    761895875361505281: "UTC-6", # Me
 }
 DEFAULT_USER_TIMEZONE_OFFSET = "UTC+0"
 DEFAULT_CLOCKED_IN_ROLE_ID = 1475219245775196434
+OFFLINE_RETURN_PROMPT_TIMEOUT_SECONDS = 24 * 60 * 60
 HELP_VISIBLE_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/start (note?)", "Start a work session timer."),
     ("/stop", "Stop your active work session."),
@@ -678,6 +680,39 @@ class LeaderboardActionsView(discord.ui.View):
         self.add_item(_StatusReplaceButton(cog))
 
 
+class OfflineReturnPromptView(discord.ui.View):
+    """Buttons shown when a user returns from offline while still clocked in."""
+
+    def __init__(self, cog: "TimeTrackingCog", *, user_id: int, session_id: int) -> None:
+        super().__init__(timeout=OFFLINE_RETURN_PROMPT_TIMEOUT_SECONDS)
+        self.cog = cog
+        self.user_id = int(user_id)
+        self.session_id = int(session_id)
+
+    async def _guard_user(self, interaction: discord.Interaction) -> bool:
+        if interaction.user is None:
+            return False
+        if int(interaction.user.id) == self.user_id:
+            return True
+        if interaction.response.is_done():
+            await interaction.followup.send("Only the mentioned user can use these buttons.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Only the mentioned user can use these buttons.", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="Continue session", style=discord.ButtonStyle.success)
+    async def button_continue(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._guard_user(interaction):
+            return
+        await self.cog._handle_offline_return_continue(interaction, session_id=self.session_id)
+
+    @discord.ui.button(label="Trim to offline timestamp", style=discord.ButtonStyle.danger)
+    async def button_trim(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._guard_user(interaction):
+            return
+        await self.cog._handle_offline_return_trim(interaction, session_id=self.session_id)
+
+
 class TimeTrackerPanelView(discord.ui.View):
     """Persistent control-panel buttons for Start/Stop/Status."""
 
@@ -733,6 +768,7 @@ class TimeTrackingCog(commands.Cog):
         self.default_week_start = default_week_start
         self._panel_persistent_view = TimeTrackerPanelView(self)
         self._weekly_announcement_task: asyncio.Task[None] | None = None
+        self._offline_flag_reconcile_task: asyncio.Task[None] | None = None
 
     @property
     def panel_persistent_view(self) -> discord.ui.View:
@@ -749,11 +785,19 @@ class TimeTrackingCog(commands.Cog):
                 self._weekly_announcement_loop(),
                 name="weekly-leaderboard-announcement",
             )
+        if self._offline_flag_reconcile_task is None or self._offline_flag_reconcile_task.done():
+            self._offline_flag_reconcile_task = asyncio.create_task(
+                self._reconcile_unresolved_offline_flags(),
+                name="offline-flag-reconcile",
+            )
 
     def cog_unload(self) -> None:
         if self._weekly_announcement_task is not None:
             self._weekly_announcement_task.cancel()
             self._weekly_announcement_task = None
+        if self._offline_flag_reconcile_task is not None:
+            self._offline_flag_reconcile_task.cancel()
+            self._offline_flag_reconcile_task = None
 
     async def _require_guild(self, interaction: discord.Interaction) -> bool:
         if interaction.guild is None:
@@ -1620,6 +1664,283 @@ class TimeTrackingCog(commands.Cog):
         except discord.Forbidden:
             return None
 
+    async def _get_offline_return_prompt_channel(
+        self, guild: discord.Guild
+    ) -> discord.TextChannel | discord.Thread | None:
+        channel = guild.get_channel(OFFLINE_RETURN_PROMPT_CHANNEL_ID)
+        if channel is None:
+            try:
+                channel = await guild.fetch_channel(OFFLINE_RETURN_PROMPT_CHANNEL_ID)
+            except discord.HTTPException:
+                return None
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            return None
+        return channel
+
+    async def _post_offline_return_prompt(
+        self,
+        *,
+        member: discord.Member,
+        session_id: int,
+        offline_started_at: int,
+        now_ts: int,
+    ) -> None:
+        channel = await self._get_offline_return_prompt_channel(member.guild)
+        if channel is None:
+            return
+
+        offline_started_at = int(offline_started_at)
+        now_ts = int(now_ts)
+        offline_duration = max(0, now_ts - offline_started_at)
+        view = OfflineReturnPromptView(self, user_id=member.id, session_id=int(session_id))
+
+        content = (
+            f"{member.mention} your time-logging session stayed active while your status was offline for "
+            f"**{_format_duration(offline_duration)}**.\n"
+            f"Offline detected: {discord.utils.format_dt(_dt_from_ts(offline_started_at), style='F')}\n"
+            "Choose one option below:"
+        )
+        try:
+            message = await channel.send(
+                content=content,
+                view=view,
+                allowed_mentions=discord.AllowedMentions(users=[member]),
+            )
+        except discord.Forbidden:
+            return
+        except discord.HTTPException:
+            return
+
+        await self.db.mark_session_offline_flag_prompted(
+            guild_id=member.guild.id,
+            user_id=member.id,
+            session_id=int(session_id),
+            prompt_message_id=message.id,
+            prompted_at=now_ts,
+        )
+
+    async def _reconcile_unresolved_offline_flags(self) -> None:
+        await self.bot.wait_until_ready()
+        now_ts = int(time.time())
+        try:
+            rows = await self.db.list_unresolved_session_offline_flags()
+            for row in rows:
+                guild_id = int(row["guild_id"])
+                user_id = int(row["user_id"])
+                session_id = int(row["session_id"])
+                guild = self.bot.get_guild(guild_id)
+                if guild is None:
+                    continue
+
+                active = await self.db.get_active_session(guild_id=guild_id, user_id=user_id)
+                if active is None or int(active["id"]) != session_id:
+                    await self.db.resolve_session_offline_flag(
+                        guild_id=guild_id,
+                        user_id=user_id,
+                        session_id=session_id,
+                        resolved_at=now_ts,
+                    )
+                    continue
+
+                if row["prompted_at"] is not None:
+                    continue
+
+                member = guild.get_member(user_id)
+                if member is None or member.status == discord.Status.offline:
+                    continue
+
+                await self._post_offline_return_prompt(
+                    member=member,
+                    session_id=session_id,
+                    offline_started_at=int(row["offline_started_at"]),
+                    now_ts=now_ts,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"Offline flag reconcile error: {exc!r}")
+
+    async def _handle_offline_return_continue(self, interaction: discord.Interaction, *, session_id: int) -> None:
+        if not await self._require_guild(interaction):
+            return
+
+        assert interaction.guild is not None
+        assert interaction.user is not None
+        now_ts = int(time.time())
+
+        flag = await self.db.get_session_offline_flag(guild_id=interaction.guild.id, user_id=interaction.user.id)
+        if flag is None or flag["resolved_at"] is not None or int(flag["session_id"]) != int(session_id):
+            await interaction.response.edit_message(
+                content="This offline reminder is no longer active.",
+                view=None,
+            )
+            return
+
+        active = await self.db.get_active_session(guild_id=interaction.guild.id, user_id=interaction.user.id)
+        if active is None or int(active["id"]) != int(session_id):
+            await self.db.resolve_session_offline_flag(
+                guild_id=interaction.guild.id,
+                user_id=interaction.user.id,
+                session_id=int(session_id),
+                resolved_at=now_ts,
+            )
+            await interaction.response.edit_message(
+                content="Your session is already not active, so no action was needed.",
+                view=None,
+            )
+            return
+
+        await self.db.resolve_session_offline_flag(
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+            session_id=int(session_id),
+            resolved_at=now_ts,
+        )
+        started_at = int(active["started_at"])
+        await interaction.response.edit_message(
+            content=(
+                "Kept your current session active.\n"
+                f"Session started: {discord.utils.format_dt(_dt_from_ts(started_at), style='F')}"
+            ),
+            view=None,
+        )
+
+    async def _handle_offline_return_trim(self, interaction: discord.Interaction, *, session_id: int) -> None:
+        if not await self._require_guild(interaction):
+            return
+
+        assert interaction.guild is not None
+        assert interaction.user is not None
+        now_ts = int(time.time())
+
+        flag = await self.db.get_session_offline_flag(guild_id=interaction.guild.id, user_id=interaction.user.id)
+        if flag is None or flag["resolved_at"] is not None or int(flag["session_id"]) != int(session_id):
+            await interaction.response.edit_message(
+                content="This offline reminder is no longer active.",
+                view=None,
+            )
+            return
+
+        active = await self.db.get_active_session(guild_id=interaction.guild.id, user_id=interaction.user.id)
+        if active is None or int(active["id"]) != int(session_id):
+            await self.db.resolve_session_offline_flag(
+                guild_id=interaction.guild.id,
+                user_id=interaction.user.id,
+                session_id=int(session_id),
+                resolved_at=now_ts,
+            )
+            await interaction.response.edit_message(
+                content="Your session is already not active, so there was nothing to trim.",
+                view=None,
+            )
+            return
+
+        started_at = int(active["started_at"])
+        offline_started_at = int(flag["offline_started_at"])
+        trim_end_ts = max(started_at, min(now_ts, offline_started_at))
+        removed_seconds = max(0, now_ts - trim_end_ts)
+
+        await self.db.stop_session(session_id=int(session_id), ended_at=int(trim_end_ts))
+        await self.db.resolve_session_offline_flag(
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+            session_id=int(session_id),
+            resolved_at=now_ts,
+        )
+
+        role_warning = await self._update_clocked_in_role(interaction, clocked_in=False)
+        settings = await self._get_settings(interaction.guild.id)
+        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        weekly = await self._compute_weekly_total(
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+            week_offset=0,
+            now_ts=now_ts,
+            tz_name=tz_name,
+            week_start=settings["week_start"],
+        )
+        nick_warning = await self._update_nickname_week_hours(
+            interaction,
+            week_total_seconds=weekly.total_seconds,
+        )
+
+        msg = (
+            "Trimmed your active session to when you were first detected offline.\n"
+            f"Session end set to: {discord.utils.format_dt(_dt_from_ts(trim_end_ts), style='F')}\n"
+            f"Removed from current run time: {_format_duration(removed_seconds)}"
+        )
+        extras: list[str] = []
+        if role_warning:
+            extras.append(f"Role sync: {role_warning}")
+        if nick_warning:
+            extras.append(f"Nickname sync: {nick_warning}")
+        if extras:
+            msg = msg + "\n" + "\n".join(extras)
+
+        await interaction.response.edit_message(content=msg, view=None)
+
+    @commands.Cog.listener()
+    async def on_presence_update(self, before: discord.Member, after: discord.Member) -> None:
+        try:
+            if after.bot:
+                return
+            if before.guild is None or after.guild is None:
+                return
+            if before.guild.id != after.guild.id:
+                return
+            if before.status == after.status:
+                return
+
+            was_offline = before.status == discord.Status.offline
+            is_offline = after.status == discord.Status.offline
+            if was_offline == is_offline:
+                return
+
+            guild_id = int(after.guild.id)
+            user_id = int(after.id)
+            now_ts = int(time.time())
+
+            if is_offline:
+                active = await self.db.get_active_session(guild_id=guild_id, user_id=user_id)
+                if active is None:
+                    return
+                await self.db.upsert_session_offline_flag(
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    session_id=int(active["id"]),
+                    offline_started_at=now_ts,
+                )
+                return
+
+            # User came back from offline.
+            flag = await self.db.get_session_offline_flag(guild_id=guild_id, user_id=user_id)
+            if flag is None or flag["resolved_at"] is not None:
+                return
+
+            session_id = int(flag["session_id"])
+            active = await self.db.get_active_session(guild_id=guild_id, user_id=user_id)
+            if active is None or int(active["id"]) != session_id:
+                await self.db.resolve_session_offline_flag(
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    resolved_at=now_ts,
+                )
+                return
+
+            # Already prompted for this offline stretch; wait for user action.
+            if flag["prompted_at"] is not None:
+                return
+
+            await self._post_offline_return_prompt(
+                member=after,
+                session_id=session_id,
+                offline_started_at=int(flag["offline_started_at"]),
+                now_ts=now_ts,
+            )
+        except Exception as exc:
+            print(f"on_presence_update error: {exc!r}")
+
     async def _handle_start(
         self,
         interaction: discord.Interaction,
@@ -1745,7 +2066,14 @@ class TimeTrackingCog(commands.Cog):
             return
 
         started_at = int(active["started_at"])
-        await self.db.stop_session(session_id=int(active["id"]), ended_at=now_ts)
+        stopped_session_id = int(active["id"])
+        await self.db.stop_session(session_id=stopped_session_id, ended_at=now_ts)
+        await self.db.resolve_session_offline_flag(
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+            session_id=stopped_session_id,
+            resolved_at=now_ts,
+        )
         duration = max(0, now_ts - started_at)
 
         role_warning = await self._update_clocked_in_role(interaction, clocked_in=False)

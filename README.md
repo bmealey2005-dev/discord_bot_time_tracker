@@ -16,6 +16,7 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/setreportchannel [channel]` (Manage Server/Admin) set the channel to post reports/leaderboards
 - `/postpanel` (Manage Server/Admin) post a persistent button panel (Start/Stop/Status) in the current channel
 - `/restoreday user week_offset weekday seconds` owner-only data restore tool (user id `761895875361505281`)
+- Offline-return reminder flow for active sessions: when a clocked-in user goes offline then returns, the bot prompts them in channel `1475250429926572112` to either keep the session running or trim it back to the detected offline timestamp
 - Automatic weekly leaderboard announcement (public post with `@everyone`)
 - `/testweeklyannouncement` developer-only command to post immediate announcement preview in current channel (no dedupe)
 
@@ -31,6 +32,7 @@ For private user-triggered outputs (`/start`, `/stop`, `/status`, `/report`, `/l
    - OAuth2 -> URL Generator
    - Scopes: `bot`, `applications.commands`
    - Bot permissions (minimum): `Send Messages`, `Embed Links`, `Read Message History`
+   - Privileged Gateway Intents: enable **Server Members Intent** and **Presence Intent** on the Bot page (required for offline-return prompts)
 4. Paste the token into your `.env` file as `DISCORD_TOKEN=...`.
    - Do not commit or share your token. 
 5. (Optional but recommended for dev) Get your server (guild) ID:
@@ -104,6 +106,16 @@ Use `/add-time`, `/subtract-time`, or `/set-time` to correct your own day totals
 - Audit requirement:
   - each successful use posts a **public audit embed** in the same channel
   - audit includes user, command, date/timezone, before, after, and signed delta
+
+## Offline-return session prompt
+When a user has an active session and their Discord status changes to offline, the bot stores that detection timestamp but does not auto-stop immediately.
+
+- On return to any non-offline status, the bot posts a prompt in channel `1475250429926572112` mentioning the user.
+- Prompt options:
+  - **Continue session**: keeps the active session unchanged.
+  - **Trim to offline timestamp**: closes the current session at the originally detected offline timestamp.
+- The prompt is only actionable by the mentioned user.
+- If the session is already stopped by the time they return, the offline marker is resolved automatically.
 
 ## Payment command (`/payment-data`)
 - Visibility: restricted with `Manage Server` default permission and runtime owner check.

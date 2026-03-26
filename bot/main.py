@@ -14,6 +14,8 @@ from bot.db import Database
 class TimeTrackerBot(commands.Bot):
     def __init__(self, *, db: Database, config: Config) -> None:
         intents = discord.Intents.default()
+        intents.members = True
+        intents.presences = True
         super().__init__(command_prefix="!", intents=intents)
         self.db = db
         self.config = config

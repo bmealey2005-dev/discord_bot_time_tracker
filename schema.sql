@@ -38,3 +38,18 @@ CREATE TABLE IF NOT EXISTS weekly_leaderboard_posts (
   posted_at_ts INTEGER NOT NULL,
   PRIMARY KEY(channel_id, week_start_ts)
 );
+
+CREATE TABLE IF NOT EXISTS session_offline_flags (
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  session_id INTEGER NOT NULL,
+  offline_started_at INTEGER NOT NULL,
+  prompt_message_id TEXT NULL,
+  prompted_at INTEGER NULL,
+  resolved_at INTEGER NULL,
+  PRIMARY KEY(guild_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_offline_flags_unresolved
+  ON session_offline_flags(guild_id, user_id, session_id)
+  WHERE resolved_at IS NULL;
