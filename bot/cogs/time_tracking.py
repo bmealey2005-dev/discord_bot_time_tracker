@@ -87,12 +87,12 @@ def _format_duration(total_seconds: int) -> str:
 def _format_offline_resolution_button_labels(
     *,
     session_started_at: int,
-    offline_started_at: int,
+    offline_total_seconds: int,
     now_ts: int,
 ) -> tuple[str, str]:
     _, _, time_offline = _compute_offline_time_breakdown(
         session_started_at=session_started_at,
-        offline_started_at=offline_started_at,
+        offline_total_seconds=offline_total_seconds,
         now_ts=now_ts,
     )
     offline_text = _format_duration(time_offline)
@@ -112,16 +112,15 @@ def _format_offline_resolution_button_labels(
 def _compute_offline_time_breakdown(
     *,
     session_started_at: int,
-    offline_started_at: int,
+    offline_total_seconds: int,
     now_ts: int,
 ) -> tuple[int, int, int]:
     session_started_at = int(session_started_at)
-    offline_started_at = int(offline_started_at)
+    offline_total_seconds = max(0, int(offline_total_seconds))
     now_ts = int(now_ts)
 
     session_duration = max(0, now_ts - session_started_at)
-    offline_anchor = max(session_started_at, offline_started_at)
-    time_offline = max(0, now_ts - offline_anchor)
+    time_offline = min(session_duration, offline_total_seconds)
     time_online = max(0, session_duration - time_offline)
     return session_duration, time_online, time_offline
 
@@ -130,12 +129,12 @@ def _add_offline_time_breakdown_fields(
     embed: discord.Embed,
     *,
     session_started_at: int,
-    offline_started_at: int,
+    offline_total_seconds: int,
     now_ts: int,
 ) -> None:
     session_duration, time_online, time_offline = _compute_offline_time_breakdown(
         session_started_at=session_started_at,
-        offline_started_at=offline_started_at,
+        offline_total_seconds=offline_total_seconds,
         now_ts=now_ts,
     )
     embed.add_field(name="Session Duration", value=_format_duration(session_duration), inline=False)
@@ -749,7 +748,7 @@ class OfflineReturnPromptView(discord.ui.View):
         user_id: int,
         session_id: int,
         session_started_at: int,
-        offline_started_at: int,
+        offline_total_seconds: int,
         now_ts: int,
     ) -> None:
         super().__init__(timeout=OFFLINE_RETURN_PROMPT_TIMEOUT_SECONDS)
@@ -757,10 +756,10 @@ class OfflineReturnPromptView(discord.ui.View):
         self.user_id = int(user_id)
         self.session_id = int(session_id)
         self.session_started_at = int(session_started_at)
-        self.offline_started_at = int(offline_started_at)
+        self.offline_total_seconds = max(0, int(offline_total_seconds))
         include_label, exclude_label = _format_offline_resolution_button_labels(
             session_started_at=self.session_started_at,
-            offline_started_at=self.offline_started_at,
+            offline_total_seconds=self.offline_total_seconds,
             now_ts=int(now_ts),
         )
 
@@ -807,7 +806,7 @@ class OfflineStopDecisionView(discord.ui.View):
         user_id: int,
         session_id: int,
         session_started_at: int,
-        offline_started_at: int,
+        offline_total_seconds: int,
         now_ts: int,
     ) -> None:
         super().__init__(timeout=15 * 60)
@@ -815,10 +814,10 @@ class OfflineStopDecisionView(discord.ui.View):
         self.user_id = int(user_id)
         self.session_id = int(session_id)
         self.session_started_at = int(session_started_at)
-        self.offline_started_at = int(offline_started_at)
+        self.offline_total_seconds = max(0, int(offline_total_seconds))
         include_label, exclude_label = _format_offline_resolution_button_labels(
             session_started_at=self.session_started_at,
-            offline_started_at=self.offline_started_at,
+            offline_total_seconds=self.offline_total_seconds,
             now_ts=int(now_ts),
         )
 
@@ -1833,15 +1832,25 @@ class TimeTrackingCog(commands.Cog):
 
         offline_started_at = int(offline_started_at)
         now_ts = int(now_ts)
+        flag = await self.db.get_session_offline_flag(guild_id=member.guild.id, user_id=member.id)
+        if flag is None or flag["resolved_at"] is not None or int(flag["session_id"]) != int(session_id):
+            return
+
         active = await self.db.get_active_session(guild_id=member.guild.id, user_id=member.id)
         if active is not None and int(active["id"]) == int(session_id):
             session_started_at = int(active["started_at"])
         else:
-            # Conservative fallback if active row changed between detection and prompting.
-            session_started_at = offline_started_at
+            return
+
+        offline_total_seconds = await self.db.get_session_offline_total_seconds(
+            guild_id=member.guild.id,
+            user_id=member.id,
+            session_id=int(session_id),
+            now_ts=now_ts,
+        )
         _, _, time_offline = _compute_offline_time_breakdown(
             session_started_at=session_started_at,
-            offline_started_at=offline_started_at,
+            offline_total_seconds=offline_total_seconds,
             now_ts=now_ts,
         )
         view = OfflineReturnPromptView(
@@ -1849,14 +1858,14 @@ class TimeTrackingCog(commands.Cog):
             user_id=member.id,
             session_id=int(session_id),
             session_started_at=session_started_at,
-            offline_started_at=offline_started_at,
+            offline_total_seconds=offline_total_seconds,
             now_ts=now_ts,
         )
         embed = discord.Embed(title="Offline session review", color=discord.Color.orange())
         _add_offline_time_breakdown_fields(
             embed,
             session_started_at=session_started_at,
-            offline_started_at=offline_started_at,
+            offline_total_seconds=offline_total_seconds,
             now_ts=now_ts,
         )
 
@@ -1866,17 +1875,34 @@ class TimeTrackingCog(commands.Cog):
             f"Offline detected: {discord.utils.format_dt(_dt_from_ts(offline_started_at), style='F')}\n"
             "Choose one option below:"
         )
-        try:
-            message = await channel.send(
-                content=content,
-                embed=embed,
-                view=view,
-                allowed_mentions=discord.AllowedMentions(users=[member]),
-            )
-        except discord.Forbidden:
-            return
-        except discord.HTTPException:
-            return
+        message: discord.Message | None = None
+        prompt_message_id_raw = flag["prompt_message_id"]
+        if prompt_message_id_raw is not None:
+            try:
+                existing = await channel.fetch_message(int(prompt_message_id_raw))
+                await existing.edit(content=content, embed=embed, view=view)
+                message = existing
+            except (TypeError, ValueError):
+                message = None
+            except discord.NotFound:
+                message = None
+            except discord.Forbidden:
+                return
+            except discord.HTTPException:
+                message = None
+
+        if message is None:
+            try:
+                message = await channel.send(
+                    content=content,
+                    embed=embed,
+                    view=view,
+                    allowed_mentions=discord.AllowedMentions(users=[member]),
+                )
+            except discord.Forbidden:
+                return
+            except discord.HTTPException:
+                return
 
         await self.db.mark_session_offline_flag_prompted(
             guild_id=member.guild.id,
@@ -1909,13 +1935,16 @@ class TimeTrackingCog(commands.Cog):
                     )
                     continue
 
-                if row["prompted_at"] is not None:
-                    continue
-
                 member = guild.get_member(user_id)
                 if member is None or member.status == discord.Status.offline:
                     continue
 
+                await self.db.mark_session_offline_ended(
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    ended_at=now_ts,
+                )
                 await self._post_offline_return_prompt(
                     member=member,
                     session_id=session_id,
@@ -2087,8 +2116,13 @@ class TimeTrackingCog(commands.Cog):
             return
 
         started_at = int(active["started_at"])
-        offline_started_at = int(flag["offline_started_at"])
-        trim_end_ts = max(started_at, min(now_ts, offline_started_at))
+        offline_total_seconds = await self.db.get_session_offline_total_seconds(
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+            session_id=int(session_id),
+            now_ts=now_ts,
+        )
+        trim_end_ts = max(started_at, int(now_ts) - int(offline_total_seconds))
         removed_seconds = max(0, now_ts - trim_end_ts)
 
         await self.db.stop_session(session_id=int(session_id), ended_at=int(trim_end_ts))
@@ -2117,7 +2151,7 @@ class TimeTrackingCog(commands.Cog):
         )
 
         msg = (
-            "Trimmed your active session to when you were first detected offline.\n"
+            "Excluded accumulated offline time from your active session.\n"
             f"Session end set to: {discord.utils.format_dt(_dt_from_ts(trim_end_ts), style='F')}\n"
             f"Removed from current run time: {_format_duration(removed_seconds)}"
         )
@@ -2163,6 +2197,12 @@ class TimeTrackingCog(commands.Cog):
                     session_id=int(active["id"]),
                     offline_started_at=now_ts,
                 )
+                await self.db.mark_session_offline_started(
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    session_id=int(active["id"]),
+                    started_at=now_ts,
+                )
                 return
 
             # User came back from offline.
@@ -2181,9 +2221,12 @@ class TimeTrackingCog(commands.Cog):
                 )
                 return
 
-            # Already prompted for this offline stretch; wait for user action.
-            if flag["prompted_at"] is not None:
-                return
+            await self.db.mark_session_offline_ended(
+                guild_id=guild_id,
+                user_id=user_id,
+                session_id=session_id,
+                ended_at=now_ts,
+            )
 
             await self._post_offline_return_prompt(
                 member=after,
@@ -2333,6 +2376,12 @@ class TimeTrackingCog(commands.Cog):
         ):
             session_started_at = int(active["started_at"])
             offline_started_at = int(offline_flag["offline_started_at"])
+            offline_total_seconds = await self.db.get_session_offline_total_seconds(
+                guild_id=interaction.guild.id,
+                user_id=interaction.user.id,
+                session_id=int(active["id"]),
+                now_ts=now_ts,
+            )
             prompt = (
                 "You were detected offline during this active session and must choose how to resolve it before stopping.\n"
                 f"Offline detected: {discord.utils.format_dt(_dt_from_ts(offline_started_at), style='R')} "
@@ -2343,7 +2392,7 @@ class TimeTrackingCog(commands.Cog):
             _add_offline_time_breakdown_fields(
                 embed,
                 session_started_at=session_started_at,
-                offline_started_at=offline_started_at,
+                offline_total_seconds=offline_total_seconds,
                 now_ts=now_ts,
             )
             view = OfflineStopDecisionView(
@@ -2351,7 +2400,7 @@ class TimeTrackingCog(commands.Cog):
                 user_id=interaction.user.id,
                 session_id=int(active["id"]),
                 session_started_at=session_started_at,
-                offline_started_at=offline_started_at,
+                offline_total_seconds=offline_total_seconds,
                 now_ts=now_ts,
             )
             if interaction.response.is_done():

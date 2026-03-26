@@ -122,6 +122,8 @@ class Database:
               user_id TEXT NOT NULL,
               session_id BIGINT NOT NULL,
               offline_started_at BIGINT NOT NULL,
+              offline_accumulated_seconds BIGINT NOT NULL DEFAULT 0,
+              offline_open_started_at BIGINT NULL,
               prompt_message_id TEXT NULL,
               prompted_at BIGINT NULL,
               resolved_at BIGINT NULL,
@@ -137,6 +139,19 @@ class Database:
             "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS panel_message_id TEXT NULL;",
             "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clocked_in_role_id TEXT NULL;",
             "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS nickname_hours_enabled INTEGER NOT NULL DEFAULT 1;",
+            "ALTER TABLE session_offline_flags ADD COLUMN IF NOT EXISTS offline_accumulated_seconds BIGINT NOT NULL DEFAULT 0;",
+            "ALTER TABLE session_offline_flags ADD COLUMN IF NOT EXISTS offline_open_started_at BIGINT NULL;",
+            """
+            UPDATE session_offline_flags
+            SET offline_accumulated_seconds = COALESCE(offline_accumulated_seconds, 0)
+            WHERE offline_accumulated_seconds IS NULL;
+            """,
+            """
+            UPDATE session_offline_flags
+            SET offline_open_started_at = offline_started_at
+            WHERE resolved_at IS NULL
+              AND offline_open_started_at IS NULL;
+            """,
         ]
 
         async with self._pool.acquire() as conn:
@@ -182,6 +197,8 @@ class Database:
               user_id TEXT NOT NULL,
               session_id INTEGER NOT NULL,
               offline_started_at INTEGER NOT NULL,
+              offline_accumulated_seconds INTEGER NOT NULL DEFAULT 0,
+              offline_open_started_at INTEGER NULL,
               prompt_message_id TEXT NULL,
               prompted_at INTEGER NULL,
               resolved_at INTEGER NULL,
@@ -194,6 +211,32 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_session_offline_flags_unresolved
               ON session_offline_flags(guild_id, user_id, session_id)
               WHERE resolved_at IS NULL;
+            """
+        )
+        cur = await self._conn.execute("PRAGMA table_info('session_offline_flags');")
+        rows = await cur.fetchall()
+        flag_cols = {str(r["name"]) for r in rows}
+        if "offline_accumulated_seconds" not in flag_cols:
+            await self._conn.execute(
+                "ALTER TABLE session_offline_flags ADD COLUMN offline_accumulated_seconds INTEGER NOT NULL DEFAULT 0;"
+            )
+        if "offline_open_started_at" not in flag_cols:
+            await self._conn.execute(
+                "ALTER TABLE session_offline_flags ADD COLUMN offline_open_started_at INTEGER NULL;"
+            )
+        await self._conn.execute(
+            """
+            UPDATE session_offline_flags
+            SET offline_accumulated_seconds = COALESCE(offline_accumulated_seconds, 0)
+            WHERE offline_accumulated_seconds IS NULL;
+            """
+        )
+        await self._conn.execute(
+            """
+            UPDATE session_offline_flags
+            SET offline_open_started_at = offline_started_at
+            WHERE resolved_at IS NULL
+              AND offline_open_started_at IS NULL;
             """
         )
 
@@ -498,7 +541,9 @@ class Database:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow(
                     """
-                    SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                    SELECT guild_id, user_id, session_id, offline_started_at,
+                           offline_accumulated_seconds, offline_open_started_at,
+                           prompt_message_id, prompted_at, resolved_at
                     FROM session_offline_flags
                     WHERE guild_id = $1 AND user_id = $2;
                     """,
@@ -512,7 +557,9 @@ class Database:
 
         cur = await self._conn.execute(
             """
-            SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+            SELECT guild_id, user_id, session_id, offline_started_at,
+                   offline_accumulated_seconds, offline_open_started_at,
+                   prompt_message_id, prompted_at, resolved_at
             FROM session_offline_flags
             WHERE guild_id = ? AND user_id = ?;
             """,
@@ -550,9 +597,11 @@ class Database:
                         await conn.execute(
                             """
                             INSERT INTO session_offline_flags(
-                                guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                                guild_id, user_id, session_id, offline_started_at,
+                                offline_accumulated_seconds, offline_open_started_at,
+                                prompt_message_id, prompted_at, resolved_at
                             )
-                            VALUES($1, $2, $3, $4, NULL, NULL, NULL);
+                            VALUES($1, $2, $3, $4, 0, $4, NULL, NULL, NULL);
                             """,
                             str(guild_id),
                             str(user_id),
@@ -570,6 +619,8 @@ class Database:
                         UPDATE session_offline_flags
                         SET session_id = $1,
                             offline_started_at = $2,
+                            offline_accumulated_seconds = 0,
+                            offline_open_started_at = $2,
                             prompt_message_id = NULL,
                             prompted_at = NULL,
                             resolved_at = NULL
@@ -600,11 +651,13 @@ class Database:
                 await self._conn.execute(
                     """
                     INSERT INTO session_offline_flags(
-                        guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                        guild_id, user_id, session_id, offline_started_at,
+                        offline_accumulated_seconds, offline_open_started_at,
+                        prompt_message_id, prompted_at, resolved_at
                     )
-                    VALUES(?, ?, ?, ?, NULL, NULL, NULL);
+                    VALUES(?, ?, ?, ?, 0, ?, NULL, NULL, NULL);
                     """,
-                    (str(guild_id), str(user_id), int(session_id), int(offline_started_at)),
+                    (str(guild_id), str(user_id), int(session_id), int(offline_started_at), int(offline_started_at)),
                 )
                 await self._conn.commit()
                 return
@@ -618,12 +671,14 @@ class Database:
                 UPDATE session_offline_flags
                 SET session_id = ?,
                     offline_started_at = ?,
+                    offline_accumulated_seconds = 0,
+                    offline_open_started_at = ?,
                     prompt_message_id = NULL,
                     prompted_at = NULL,
                     resolved_at = NULL
                 WHERE guild_id = ? AND user_id = ?;
                 """,
-                (int(session_id), int(offline_started_at), str(guild_id), str(user_id)),
+                (int(session_id), int(offline_started_at), int(offline_started_at), str(guild_id), str(user_id)),
             )
             await self._conn.commit()
         except Exception:
@@ -678,6 +733,191 @@ class Database:
         )
         await self._conn.commit()
 
+    async def mark_session_offline_started(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        session_id: int,
+        started_at: int,
+    ) -> None:
+        if self._is_postgres:
+            if self._pool is None:
+                raise RuntimeError("Database.connect() must be called first.")
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE session_offline_flags
+                    SET offline_open_started_at = COALESCE(offline_open_started_at, $1)
+                    WHERE guild_id = $2
+                      AND user_id = $3
+                      AND session_id = $4
+                      AND resolved_at IS NULL;
+                    """,
+                    int(started_at),
+                    str(guild_id),
+                    str(user_id),
+                    int(session_id),
+                )
+            return
+
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called first.")
+
+        await self._conn.execute(
+            """
+            UPDATE session_offline_flags
+            SET offline_open_started_at = COALESCE(offline_open_started_at, ?)
+            WHERE guild_id = ?
+              AND user_id = ?
+              AND session_id = ?
+              AND resolved_at IS NULL;
+            """,
+            (int(started_at), str(guild_id), str(user_id), int(session_id)),
+        )
+        await self._conn.commit()
+
+    async def mark_session_offline_ended(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        session_id: int,
+        ended_at: int,
+    ) -> None:
+        ended_at = int(ended_at)
+        if self._is_postgres:
+            if self._pool is None:
+                raise RuntimeError("Database.connect() must be called first.")
+            async with self._pool.acquire() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        """
+                        SELECT offline_open_started_at
+                        FROM session_offline_flags
+                        WHERE guild_id = $1
+                          AND user_id = $2
+                          AND session_id = $3
+                          AND resolved_at IS NULL
+                        FOR UPDATE;
+                        """,
+                        str(guild_id),
+                        str(user_id),
+                        int(session_id),
+                    )
+                    if row is None:
+                        return
+                    open_started = row["offline_open_started_at"]
+                    if open_started is None:
+                        return
+                    add_seconds = max(0, ended_at - int(open_started))
+                    await conn.execute(
+                        """
+                        UPDATE session_offline_flags
+                        SET offline_accumulated_seconds = COALESCE(offline_accumulated_seconds, 0) + $1,
+                            offline_open_started_at = NULL
+                        WHERE guild_id = $2
+                          AND user_id = $3
+                          AND session_id = $4
+                          AND resolved_at IS NULL;
+                        """,
+                        int(add_seconds),
+                        str(guild_id),
+                        str(user_id),
+                        int(session_id),
+                    )
+            return
+
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called first.")
+
+        await self._conn.execute("BEGIN IMMEDIATE;")
+        try:
+            cur = await self._conn.execute(
+                """
+                SELECT offline_open_started_at
+                FROM session_offline_flags
+                WHERE guild_id = ?
+                  AND user_id = ?
+                  AND session_id = ?
+                  AND resolved_at IS NULL;
+                """,
+                (str(guild_id), str(user_id), int(session_id)),
+            )
+            row = await cur.fetchone()
+            if row is None or row["offline_open_started_at"] is None:
+                await self._conn.commit()
+                return
+            add_seconds = max(0, ended_at - int(row["offline_open_started_at"]))
+            await self._conn.execute(
+                """
+                UPDATE session_offline_flags
+                SET offline_accumulated_seconds = COALESCE(offline_accumulated_seconds, 0) + ?,
+                    offline_open_started_at = NULL
+                WHERE guild_id = ?
+                  AND user_id = ?
+                  AND session_id = ?
+                  AND resolved_at IS NULL;
+                """,
+                (int(add_seconds), str(guild_id), str(user_id), int(session_id)),
+            )
+            await self._conn.commit()
+        except Exception:
+            await self._conn.rollback()
+            raise
+
+    async def get_session_offline_total_seconds(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        session_id: int,
+        now_ts: int,
+    ) -> int:
+        now_ts = int(now_ts)
+        row: Mapping[str, Any] | None
+        if self._is_postgres:
+            if self._pool is None:
+                raise RuntimeError("Database.connect() must be called first.")
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT offline_accumulated_seconds, offline_open_started_at
+                    FROM session_offline_flags
+                    WHERE guild_id = $1
+                      AND user_id = $2
+                      AND session_id = $3
+                      AND resolved_at IS NULL;
+                    """,
+                    str(guild_id),
+                    str(user_id),
+                    int(session_id),
+                )
+        else:
+            if self._conn is None:
+                raise RuntimeError("Database.connect() must be called first.")
+            cur = await self._conn.execute(
+                """
+                SELECT offline_accumulated_seconds, offline_open_started_at
+                FROM session_offline_flags
+                WHERE guild_id = ?
+                  AND user_id = ?
+                  AND session_id = ?
+                  AND resolved_at IS NULL;
+                """,
+                (str(guild_id), str(user_id), int(session_id)),
+            )
+            sqlite_row = await cur.fetchone()
+            row = self._sqlite_row_to_dict(sqlite_row) if sqlite_row is not None else None
+
+        if row is None:
+            return 0
+        total = int(row["offline_accumulated_seconds"] or 0)
+        open_started = row["offline_open_started_at"]
+        if open_started is not None:
+            total += max(0, now_ts - int(open_started))
+        return max(0, int(total))
+
     async def resolve_session_offline_flag(
         self,
         *,
@@ -730,7 +970,9 @@ class Database:
                 if guild_id is None:
                     rows = await conn.fetch(
                         """
-                        SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                        SELECT guild_id, user_id, session_id, offline_started_at,
+                               offline_accumulated_seconds, offline_open_started_at,
+                               prompt_message_id, prompted_at, resolved_at
                         FROM session_offline_flags
                         WHERE resolved_at IS NULL;
                         """
@@ -738,7 +980,9 @@ class Database:
                 else:
                     rows = await conn.fetch(
                         """
-                        SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                        SELECT guild_id, user_id, session_id, offline_started_at,
+                               offline_accumulated_seconds, offline_open_started_at,
+                               prompt_message_id, prompted_at, resolved_at
                         FROM session_offline_flags
                         WHERE guild_id = $1
                           AND resolved_at IS NULL;
@@ -753,7 +997,9 @@ class Database:
         if guild_id is None:
             cur = await self._conn.execute(
                 """
-                SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                SELECT guild_id, user_id, session_id, offline_started_at,
+                       offline_accumulated_seconds, offline_open_started_at,
+                       prompt_message_id, prompted_at, resolved_at
                 FROM session_offline_flags
                 WHERE resolved_at IS NULL;
                 """
@@ -761,7 +1007,9 @@ class Database:
         else:
             cur = await self._conn.execute(
                 """
-                SELECT guild_id, user_id, session_id, offline_started_at, prompt_message_id, prompted_at, resolved_at
+                SELECT guild_id, user_id, session_id, offline_started_at,
+                       offline_accumulated_seconds, offline_open_started_at,
+                       prompt_message_id, prompted_at, resolved_at
                 FROM session_offline_flags
                 WHERE guild_id = ?
                   AND resolved_at IS NULL;

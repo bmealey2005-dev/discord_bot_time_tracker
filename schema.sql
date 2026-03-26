@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS session_offline_flags (
   user_id TEXT NOT NULL,
   session_id INTEGER NOT NULL,
   offline_started_at INTEGER NOT NULL,
+  offline_accumulated_seconds INTEGER NOT NULL DEFAULT 0,
+  offline_open_started_at INTEGER NULL,
   prompt_message_id TEXT NULL,
   prompted_at INTEGER NULL,
   resolved_at INTEGER NULL,
