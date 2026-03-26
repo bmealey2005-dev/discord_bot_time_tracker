@@ -124,9 +124,9 @@ def _add_offline_time_breakdown_fields(
         offline_started_at=offline_started_at,
         now_ts=now_ts,
     )
-    embed.add_field(name="Session Duration", value=_format_duration(session_duration), inline=True)
-    embed.add_field(name="Time Online", value=_format_duration(time_online), inline=True)
-    embed.add_field(name="Time Offline", value=_format_duration(time_offline), inline=True)
+    embed.add_field(name="Session Duration", value=_format_duration(session_duration), inline=False)
+    embed.add_field(name="Time Online", value=_format_duration(time_online), inline=False)
+    embed.add_field(name="Time Offline", value=_format_duration(time_offline), inline=False)
 
 
 def _format_usd_from_cents(cents: int) -> str:
