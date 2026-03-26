@@ -35,7 +35,7 @@ USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
     1014149760204156938: "UTC+0",
     629991962522681365: "UTC+1",
     434418013916233755: "UTC+1",
-    761895875361505281: "UTC+1",
+    761895875361505281: "UTC-6",
 }
 DEFAULT_USER_TIMEZONE_OFFSET = "UTC+0"
 
@@ -1675,11 +1675,12 @@ class TimeTrackingCog(commands.Cog):
         target = user or interaction.user
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
-        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=settings["timezone"])
+        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=tz_name)
 
         window = compute_week_window(
             now=_dt_from_ts(now_ts),
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=settings["week_start"],
             week_offset=int(week_offset),
         )
@@ -1688,7 +1689,7 @@ class TimeTrackingCog(commands.Cog):
             user_id=target.id,
             week_offset=int(week_offset),
             now_ts=now_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=settings["week_start"],
         )
 
@@ -1777,16 +1778,17 @@ class TimeTrackingCog(commands.Cog):
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
         week_start = int(settings["week_start"])
+        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
 
         window = compute_week_window(
             now=_dt_from_ts(now_ts),
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=week_start,
             week_offset=int(week_offset),
         )
         day_windows = self._compute_day_windows_for_week(
             week_start_ts=window.start_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
         )
 
         weekday_key = str(weekday.value).lower()
@@ -1797,7 +1799,7 @@ class TimeTrackingCog(commands.Cog):
 
         if int(seconds) > day_len:
             await interaction.response.send_message(
-                f"`seconds` must be between 0 and {day_len} for that local day in `{settings['timezone']}`.",
+                f"`seconds` must be between 0 and {day_len} for that local day in `{tz_name}`.",
                 ephemeral=True,
             )
             return
@@ -1824,7 +1826,7 @@ class TimeTrackingCog(commands.Cog):
             user_id=user.id,
             week_offset=int(week_offset),
             now_ts=now_ts,
-            tz_name=settings["timezone"],
+            tz_name=tz_name,
             week_start=week_start,
         )
 
@@ -1848,7 +1850,7 @@ class TimeTrackingCog(commands.Cog):
             value=f"{_format_duration(weekly.total_seconds)} (`{weekly.total_seconds}s`)",
             inline=False,
         )
-        embed.set_footer(text=f"Timezone: {settings['timezone']} | Week offset: {int(week_offset)}")
+        embed.set_footer(text=f"Timezone: {tz_name} (invoker-local) | Week offset: {int(week_offset)}")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

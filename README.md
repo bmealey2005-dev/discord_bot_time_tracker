@@ -16,7 +16,7 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/testweeklyannouncement` developer-only command to post immediate announcement preview in current channel (no dedupe)
 
 Weekly totals are computed from stored sessions using timezone-aware week windows. Data is kept (no destructive weekly reset); totals naturally \"reset\" when the week window changes.
-For private user-triggered outputs (`/start`, `/stop`, `/status`, `/leaderboard`, `/hourly-data`), time windows are localized to the invoking user's configured offset mapping (fallback `UTC+0`).
+For private user-triggered outputs (`/start`, `/stop`, `/status`, `/report`, `/leaderboard`, `/hourly-data`), time windows are localized to the invoking user's configured offset mapping (fallback `UTC+0`).
 
 ## Discord app setup (one-time)
 1. Go to https://discord.com/developers/applications and create an application.
@@ -82,7 +82,7 @@ Use `/restoreday` to restore historical time after data-loss incidents.
   - It inserts one synthetic closed session for the requested amount
 - Safety: if an active (open) session overlaps the target day, the command fails instead of mutating data
 
-The command resolves day boundaries using the guild timezone and configured week start, so DST-length days are handled correctly.
+The command resolves day boundaries using the invoking user's timezone mapping and configured week start, so DST-length days are handled correctly.
 
 ## Automatic weekly leaderboard announcement
 The bot automatically posts a weekly leaderboard announcement:
