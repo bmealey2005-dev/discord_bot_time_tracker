@@ -915,7 +915,7 @@ class TimeTrackerPanelView(discord.ui.View):
         await self.cog._handle_leaderboard(interaction, week_offset=0)
 
     @discord.ui.button(
-        label="?",
+        label="❓",
         style=discord.ButtonStyle.secondary,
         custom_id="timetracker:help",
     )
