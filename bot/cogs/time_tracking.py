@@ -84,6 +84,20 @@ def _format_duration(total_seconds: int) -> str:
     return f"{seconds}s"
 
 
+def _compute_trim_to_offline_end_ts(*, started_at: int, offline_started_at: int, now_ts: int) -> int:
+    return max(int(started_at), min(int(now_ts), int(offline_started_at)))
+
+
+def _format_exclude_offline_time_label(*, started_at: int, offline_started_at: int, now_ts: int) -> str:
+    trim_end_ts = _compute_trim_to_offline_end_ts(
+        started_at=int(started_at),
+        offline_started_at=int(offline_started_at),
+        now_ts=int(now_ts),
+    )
+    kept_seconds = max(0, int(trim_end_ts) - int(started_at))
+    return f"Exclude offline time ({_format_duration(kept_seconds)})"
+
+
 def _format_usd_from_cents(cents: int) -> str:
     value = Decimal(int(cents)) / Decimal(100)
     return f"${value:,.2f}"
@@ -683,32 +697,52 @@ class LeaderboardActionsView(discord.ui.View):
 class OfflineReturnPromptView(discord.ui.View):
     """Buttons shown when a user returns from offline while still clocked in."""
 
-    def __init__(self, cog: "TimeTrackingCog", *, user_id: int, session_id: int) -> None:
+    def __init__(self, cog: "TimeTrackingCog", *, user_id: int, session_id: int, trim_label: str) -> None:
         super().__init__(timeout=OFFLINE_RETURN_PROMPT_TIMEOUT_SECONDS)
         self.cog = cog
         self.user_id = int(user_id)
         self.session_id = int(session_id)
+        self.add_item(_OfflineReturnContinueButton(cog, user_id=int(user_id), session_id=int(session_id)))
+        self.add_item(
+            _OfflineReturnTrimButton(
+                cog,
+                user_id=int(user_id),
+                session_id=int(session_id),
+                label=str(trim_label),
+            )
+        )
 
-    async def _guard_user(self, interaction: discord.Interaction) -> bool:
-        if interaction.user is None:
-            return False
-        if int(interaction.user.id) == self.user_id:
-            return True
-        if interaction.response.is_done():
-            await interaction.followup.send("Only the mentioned user can use these buttons.", ephemeral=True)
-        else:
-            await interaction.response.send_message("Only the mentioned user can use these buttons.", ephemeral=True)
-        return False
 
-    @discord.ui.button(label="Continue session", style=discord.ButtonStyle.success)
-    async def button_continue(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._guard_user(interaction):
+class _OfflineReturnContinueButton(discord.ui.Button):
+    def __init__(self, cog: "TimeTrackingCog", *, user_id: int, session_id: int) -> None:
+        super().__init__(label="Continue session", style=discord.ButtonStyle.success)
+        self.cog = cog
+        self.user_id = int(user_id)
+        self.session_id = int(session_id)
+
+    async def callback(self, interaction: discord.Interaction) -> None:  # type: ignore[override]
+        if interaction.user is None or int(interaction.user.id) != self.user_id:
+            if interaction.response.is_done():
+                await interaction.followup.send("Only the mentioned user can use these buttons.", ephemeral=True)
+            else:
+                await interaction.response.send_message("Only the mentioned user can use these buttons.", ephemeral=True)
             return
         await self.cog._handle_offline_return_continue(interaction, session_id=self.session_id)
 
-    @discord.ui.button(label="Trim to offline timestamp", style=discord.ButtonStyle.danger)
-    async def button_trim(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._guard_user(interaction):
+
+class _OfflineReturnTrimButton(discord.ui.Button):
+    def __init__(self, cog: "TimeTrackingCog", *, user_id: int, session_id: int, label: str) -> None:
+        super().__init__(label=label[:80], style=discord.ButtonStyle.danger)
+        self.cog = cog
+        self.user_id = int(user_id)
+        self.session_id = int(session_id)
+
+    async def callback(self, interaction: discord.Interaction) -> None:  # type: ignore[override]
+        if interaction.user is None or int(interaction.user.id) != self.user_id:
+            if interaction.response.is_done():
+                await interaction.followup.send("Only the mentioned user can use these buttons.", ephemeral=True)
+            else:
+                await interaction.response.send_message("Only the mentioned user can use these buttons.", ephemeral=True)
             return
         await self.cog._handle_offline_return_trim(interaction, session_id=self.session_id)
 
@@ -716,32 +750,52 @@ class OfflineReturnPromptView(discord.ui.View):
 class OfflineStopDecisionView(discord.ui.View):
     """Ephemeral decision shown when /stop is blocked by unresolved offline marker."""
 
-    def __init__(self, cog: "TimeTrackingCog", *, user_id: int, session_id: int) -> None:
+    def __init__(self, cog: "TimeTrackingCog", *, user_id: int, session_id: int, trim_label: str) -> None:
         super().__init__(timeout=15 * 60)
         self.cog = cog
         self.user_id = int(user_id)
         self.session_id = int(session_id)
+        self.add_item(_OfflineStopNowButton(cog, user_id=int(user_id), session_id=int(session_id)))
+        self.add_item(
+            _OfflineStopTrimButton(
+                cog,
+                user_id=int(user_id),
+                session_id=int(session_id),
+                label=str(trim_label),
+            )
+        )
 
-    async def _guard_user(self, interaction: discord.Interaction) -> bool:
-        if interaction.user is None:
-            return False
-        if int(interaction.user.id) == self.user_id:
-            return True
-        if interaction.response.is_done():
-            await interaction.followup.send("Only you can use these buttons.", ephemeral=True)
-        else:
-            await interaction.response.send_message("Only you can use these buttons.", ephemeral=True)
-        return False
 
-    @discord.ui.button(label="Stop session now", style=discord.ButtonStyle.danger)
-    async def button_stop_now(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._guard_user(interaction):
+class _OfflineStopNowButton(discord.ui.Button):
+    def __init__(self, cog: "TimeTrackingCog", *, user_id: int, session_id: int) -> None:
+        super().__init__(label="Stop session now", style=discord.ButtonStyle.danger)
+        self.cog = cog
+        self.user_id = int(user_id)
+        self.session_id = int(session_id)
+
+    async def callback(self, interaction: discord.Interaction) -> None:  # type: ignore[override]
+        if interaction.user is None or int(interaction.user.id) != self.user_id:
+            if interaction.response.is_done():
+                await interaction.followup.send("Only you can use these buttons.", ephemeral=True)
+            else:
+                await interaction.response.send_message("Only you can use these buttons.", ephemeral=True)
             return
         await self.cog._handle_offline_stop_now_choice(interaction, session_id=self.session_id)
 
-    @discord.ui.button(label="Trim to offline timestamp", style=discord.ButtonStyle.secondary)
-    async def button_trim_offline(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._guard_user(interaction):
+
+class _OfflineStopTrimButton(discord.ui.Button):
+    def __init__(self, cog: "TimeTrackingCog", *, user_id: int, session_id: int, label: str) -> None:
+        super().__init__(label=label[:80], style=discord.ButtonStyle.secondary)
+        self.cog = cog
+        self.user_id = int(user_id)
+        self.session_id = int(session_id)
+
+    async def callback(self, interaction: discord.Interaction) -> None:  # type: ignore[override]
+        if interaction.user is None or int(interaction.user.id) != self.user_id:
+            if interaction.response.is_done():
+                await interaction.followup.send("Only you can use these buttons.", ephemeral=True)
+            else:
+                await interaction.response.send_message("Only you can use these buttons.", ephemeral=True)
             return
         await self.cog._handle_offline_return_trim(interaction, session_id=self.session_id)
 
@@ -1725,7 +1779,22 @@ class TimeTrackingCog(commands.Cog):
         offline_started_at = int(offline_started_at)
         now_ts = int(now_ts)
         offline_duration = max(0, now_ts - offline_started_at)
-        view = OfflineReturnPromptView(self, user_id=member.id, session_id=int(session_id))
+        active = await self.db.get_active_session(guild_id=member.guild.id, user_id=member.id)
+        if active is not None and int(active["id"]) == int(session_id):
+            started_at_for_label = int(active["started_at"])
+        else:
+            started_at_for_label = offline_started_at
+        trim_label = _format_exclude_offline_time_label(
+            started_at=started_at_for_label,
+            offline_started_at=offline_started_at,
+            now_ts=now_ts,
+        )
+        view = OfflineReturnPromptView(
+            self,
+            user_id=member.id,
+            session_id=int(session_id),
+            trim_label=trim_label,
+        )
 
         content = (
             f"{member.mention} your time-logging session stayed active while your status was offline for "
@@ -1954,7 +2023,11 @@ class TimeTrackingCog(commands.Cog):
 
         started_at = int(active["started_at"])
         offline_started_at = int(flag["offline_started_at"])
-        trim_end_ts = max(started_at, min(now_ts, offline_started_at))
+        trim_end_ts = _compute_trim_to_offline_end_ts(
+            started_at=started_at,
+            offline_started_at=offline_started_at,
+            now_ts=now_ts,
+        )
         removed_seconds = max(0, now_ts - trim_end_ts)
 
         await self.db.stop_session(session_id=int(session_id), ended_at=int(trim_end_ts))
@@ -2197,14 +2270,23 @@ class TimeTrackingCog(commands.Cog):
             and offline_flag["resolved_at"] is None
             and int(offline_flag["session_id"]) == int(active["id"])
         ):
+            offline_detected_at = int(offline_flag["offline_started_at"])
+            trim_label = _format_exclude_offline_time_label(
+                started_at=int(active["started_at"]),
+                offline_started_at=offline_detected_at,
+                now_ts=now_ts,
+            )
             prompt = (
                 "You were detected offline during this active session and must choose how to resolve it before stopping.\n"
+                f"Offline detected: {discord.utils.format_dt(_dt_from_ts(offline_detected_at), style='R')} "
+                f"({discord.utils.format_dt(_dt_from_ts(offline_detected_at), style='F')})\n"
                 "Pick one option below:"
             )
             view = OfflineStopDecisionView(
                 self,
                 user_id=interaction.user.id,
                 session_id=int(active["id"]),
+                trim_label=trim_label,
             )
             if interaction.response.is_done():
                 await interaction.followup.send(prompt, ephemeral=True, view=view)
