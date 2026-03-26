@@ -713,6 +713,39 @@ class OfflineReturnPromptView(discord.ui.View):
         await self.cog._handle_offline_return_trim(interaction, session_id=self.session_id)
 
 
+class OfflineStopDecisionView(discord.ui.View):
+    """Ephemeral decision shown when /stop is blocked by unresolved offline marker."""
+
+    def __init__(self, cog: "TimeTrackingCog", *, user_id: int, session_id: int) -> None:
+        super().__init__(timeout=15 * 60)
+        self.cog = cog
+        self.user_id = int(user_id)
+        self.session_id = int(session_id)
+
+    async def _guard_user(self, interaction: discord.Interaction) -> bool:
+        if interaction.user is None:
+            return False
+        if int(interaction.user.id) == self.user_id:
+            return True
+        if interaction.response.is_done():
+            await interaction.followup.send("Only you can use these buttons.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Only you can use these buttons.", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="Stop session now", style=discord.ButtonStyle.danger)
+    async def button_stop_now(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._guard_user(interaction):
+            return
+        await self.cog._handle_offline_stop_now_choice(interaction, session_id=self.session_id)
+
+    @discord.ui.button(label="Trim to offline timestamp", style=discord.ButtonStyle.secondary)
+    async def button_trim_offline(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._guard_user(interaction):
+            return
+        await self.cog._handle_offline_return_trim(interaction, session_id=self.session_id)
+
+
 class TimeTrackerPanelView(discord.ui.View):
     """Persistent control-panel buttons for Start/Stop/Status."""
 
@@ -1787,6 +1820,57 @@ class TimeTrackingCog(commands.Cog):
         except discord.HTTPException:
             pass
 
+    async def _cleanup_stored_offline_ping_message(
+        self,
+        *,
+        guild: discord.Guild,
+        flag: Mapping[str, Any] | None,
+    ) -> None:
+        if flag is None:
+            return
+        prompt_message_id_raw = flag["prompt_message_id"]
+        if prompt_message_id_raw is None:
+            return
+
+        try:
+            prompt_message_id = int(prompt_message_id_raw)
+        except (TypeError, ValueError):
+            return
+
+        channel = await self._get_offline_return_prompt_channel(guild)
+        if channel is None:
+            return
+
+        try:
+            msg = await channel.fetch_message(prompt_message_id)
+            await msg.delete()
+        except discord.NotFound:
+            pass
+        except discord.Forbidden:
+            pass
+        except discord.HTTPException:
+            pass
+
+    async def _handle_offline_stop_now_choice(self, interaction: discord.Interaction, *, session_id: int) -> None:
+        if not await self._require_guild(interaction):
+            return
+
+        assert interaction.guild is not None
+        assert interaction.user is not None
+
+        flag = await self.db.get_session_offline_flag(guild_id=interaction.guild.id, user_id=interaction.user.id)
+        if flag is None or flag["resolved_at"] is not None or int(flag["session_id"]) != int(session_id):
+            await self._send_ephemeral_interaction_message(
+                interaction,
+                "This offline reminder is no longer active.",
+            )
+            await self._cleanup_offline_prompt_message(interaction)
+            return
+
+        # Delete the public #time-logging ping first (best effort).
+        await self._cleanup_stored_offline_ping_message(guild=interaction.guild, flag=flag)
+        await self._handle_stop(interaction, allow_offline_flag_bypass=True)
+
     async def _handle_offline_return_continue(self, interaction: discord.Interaction, *, session_id: int) -> None:
         if not await self._require_guild(interaction):
             return
@@ -1825,6 +1909,7 @@ class TimeTrackingCog(commands.Cog):
             session_id=int(session_id),
             resolved_at=now_ts,
         )
+        await self._cleanup_stored_offline_ping_message(guild=interaction.guild, flag=flag)
         started_at = int(active["started_at"])
         await self._send_ephemeral_interaction_message(
             interaction,
@@ -1879,6 +1964,7 @@ class TimeTrackingCog(commands.Cog):
             session_id=int(session_id),
             resolved_at=now_ts,
         )
+        await self._cleanup_stored_offline_ping_message(guild=interaction.guild, flag=flag)
 
         role_warning = await self._update_clocked_in_role(interaction, clocked_in=False)
         settings = await self._get_settings(interaction.guild.id)
@@ -2081,7 +2167,13 @@ class TimeTrackingCog(commands.Cog):
         else:
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    async def _handle_stop(self, interaction: discord.Interaction, *, update_invoking_message: bool = False) -> None:
+    async def _handle_stop(
+        self,
+        interaction: discord.Interaction,
+        *,
+        update_invoking_message: bool = False,
+        allow_offline_flag_bypass: bool = False,
+    ) -> None:
         if not await self._require_guild(interaction):
             return
 
@@ -2096,6 +2188,28 @@ class TimeTrackingCog(commands.Cog):
                 await interaction.response.edit_message(content=msg, embed=None, view=ClockedOutActionsView(self))
             else:
                 await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        offline_flag = await self.db.get_session_offline_flag(guild_id=interaction.guild.id, user_id=interaction.user.id)
+        if (
+            not allow_offline_flag_bypass
+            and offline_flag is not None
+            and offline_flag["resolved_at"] is None
+            and int(offline_flag["session_id"]) == int(active["id"])
+        ):
+            prompt = (
+                "You were detected offline during this active session and must choose how to resolve it before stopping.\n"
+                "Pick one option below:"
+            )
+            view = OfflineStopDecisionView(
+                self,
+                user_id=interaction.user.id,
+                session_id=int(active["id"]),
+            )
+            if interaction.response.is_done():
+                await interaction.followup.send(prompt, ephemeral=True, view=view)
+            else:
+                await interaction.response.send_message(prompt, ephemeral=True, view=view)
             return
 
         started_at = int(active["started_at"])

@@ -1,13 +1,13 @@
 # Discord Time Tracker Bot (Python + SQLite)
 
 Small-team Discord bot for tracking hourly work sessions with weekly totals and optional report-channel posting.
-
+ 
 ## Features     
 - `/start [note]` start a work session (one active session per user per server)
 - `/stop` stop the active session and show session duration + current week total
 - `/status` show whether you're clocked in + elapsed time 
 - `/report [user] [week_offset]` weekly total for a specific user (defaults to you) 
-- `/leaderboard [week_offset]` weekly totals for everyone with sessions (day/week boundaries are localized to the timezone of the user who runs the command)
+- `/leaderboard [week_offset]` weekly totals for everyone with sessions (day/week boundaries are localized to the timezone of the user who runs the command)  
 - `/hourly-data [week_offset]` weekly heatmap: per weekday, two rows of 12 blocks (AM hours 0–11, PM 12–23, localized to the timezone of the user who runs the command); uses the same week/report-channel behavior as `/leaderboard`. Each user after the first gets their own embed; users 10+ share the last embed (up to 10 embeds per message)
 - `/add-time date minutes` add minutes to your own logged day total (last 7 invoker-local days only) with required public audit message
 - `/subtract-time date minutes` subtract minutes from your own logged day total (last 7 invoker-local days only) with required public audit message
