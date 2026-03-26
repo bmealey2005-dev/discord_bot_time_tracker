@@ -37,6 +37,7 @@ PAYMENT_DEVELOPER_USER_IDS: tuple[int, ...] = (
     1014149760204156938,
     629991962522681365,
     434418013916233755,
+    656182155311054858,
 )
 DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR: tuple[tuple[int, int], ...] = (
     (0, 3000),
@@ -50,12 +51,27 @@ PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
     1014149760204156938: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
     629991962522681365: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
     434418013916233755: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
+    656182155311054858: (
+        (0, 3500),
+        (10, 3750),
+        (20, 4000),
+        (30, 4500),
+        (40, 5000),
+        (50, 6000),
+    ),
 }
 USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
+
+    # Owner
+    761895875361505281: "UTC-5", # Me
+
+    # Scripters
     1014149760204156938: "UTC+0", # Alex
     629991962522681365: "UTC+1", # Wharkk
     434418013916233755: "UTC+1",  # Yandere
-    761895875361505281: "UTC-6", # Me
+
+    # UI Artists
+    656182155311054858: "UTC+8", # maus
 }
 DEFAULT_USER_TIMEZONE_OFFSET = "UTC+0"
 DEFAULT_CLOCKED_IN_ROLE_ID = 1475219245775196434
@@ -2699,7 +2715,7 @@ class TimeTrackingCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.default_permissions(administrator=True)
-    @app_commands.command(name="report", description="Show weekly hours for a scripter.")
+    @app_commands.command(name="report", description="Show weekly hours for a user.")
     @app_commands.describe(user="Whose hours to report (defaults to you)", week_offset="0=current week, -1=previous week")
     async def report(
         self,
