@@ -876,7 +876,7 @@ class OfflineStopDecisionView(discord.ui.View):
 
 
 class TimeTrackerPanelView(discord.ui.View):
-    """Persistent control-panel buttons for Start/Stop/Status."""
+    """Persistent control-panel buttons for core user actions."""
 
     def __init__(self, cog: "TimeTrackingCog") -> None:
         super().__init__(timeout=None)
@@ -913,6 +913,14 @@ class TimeTrackerPanelView(discord.ui.View):
     )
     async def button_leaderboard(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self.cog._handle_leaderboard(interaction, week_offset=0)
+
+    @discord.ui.button(
+        label="?",
+        style=discord.ButtonStyle.secondary,
+        custom_id="timetracker:help",
+    )
+    async def button_help(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self.cog._handle_help(interaction)
 
 
 class TimeTrackingCog(commands.Cog):
@@ -2729,21 +2737,7 @@ class TimeTrackingCog(commands.Cog):
             msg = await interaction.followup.send(embeds=send_embeds, view=view, ephemeral=True)
         _debug_log_embeds_vs_message("hourly-data followup", pre_embeds=send_embeds, message=msg)
 
-    @app_commands.command(name="start", description="Start a work session timer.")
-    @app_commands.describe(note="Optional note about what you're working on")
-    async def start(self, interaction: discord.Interaction, note: str | None = None) -> None:
-        await self._handle_start(interaction, note=note)
-
-    @app_commands.command(name="stop", description="Stop your current work session timer.")
-    async def stop(self, interaction: discord.Interaction) -> None:
-        await self._handle_stop(interaction)
-
-    @app_commands.command(name="status", description="See whether you're clocked in and your current timer.")
-    async def status(self, interaction: discord.Interaction) -> None:
-        await self._handle_status(interaction)
-
-    @app_commands.command(name="help", description="List supported bot commands (non-owner).")
-    async def help(self, interaction: discord.Interaction) -> None:
+    async def _handle_help(self, interaction: discord.Interaction) -> None:
         if not await self._require_guild(interaction):
             return
         if not await self._require_required_role(interaction):
@@ -2760,6 +2754,23 @@ class TimeTrackingCog(commands.Cog):
             + "\n".join(lines)
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="start", description="Start a work session timer.")
+    @app_commands.describe(note="Optional note about what you're working on")
+    async def start(self, interaction: discord.Interaction, note: str | None = None) -> None:
+        await self._handle_start(interaction, note=note)
+
+    @app_commands.command(name="stop", description="Stop your current work session timer.")
+    async def stop(self, interaction: discord.Interaction) -> None:
+        await self._handle_stop(interaction)
+
+    @app_commands.command(name="status", description="See whether you're clocked in and your current timer.")
+    async def status(self, interaction: discord.Interaction) -> None:
+        await self._handle_status(interaction)
+
+    @app_commands.command(name="help", description="List supported bot commands (non-owner).")
+    async def help(self, interaction: discord.Interaction) -> None:
+        await self._handle_help(interaction)
 
     @app_commands.default_permissions(administrator=True)
     @app_commands.command(name="report", description="Show weekly hours for a user.")
