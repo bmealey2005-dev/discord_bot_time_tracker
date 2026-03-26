@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timedelta, timezone, time as dt_time
 import time
 from typing import Any, Mapping
@@ -31,6 +32,19 @@ WEEKLY_ANNOUNCEMENT_CHANNEL_ID = 1469817014448029807
 WEEKLY_ANNOUNCEMENT_TIMEZONE = "Etc/GMT+6"
 WEEKLY_ANNOUNCEMENT_WEEK_START = 0  # Monday
 WEEKLY_ANNOUNCEMENT_GRACE_SECONDS = 15 * 60
+PAYMENT_DEVELOPER_USER_IDS: tuple[int, ...] = (
+    1014149760204156938,
+    629991962522681365,
+    434418013916233755,
+)
+PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR: tuple[tuple[int, int], ...] = (
+    (0, 3000),
+    (10, 3300),
+    (20, 3600),
+    (30, 4000),
+    (40, 4500),
+    (50, 5000),
+)
 USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
     1014149760204156938: "UTC+0",
     629991962522681365: "UTC+1",
@@ -49,6 +63,11 @@ def _format_duration(total_seconds: int) -> str:
     if minutes > 0:
         return f"{minutes}m {seconds}s"
     return f"{seconds}s"
+
+
+def _format_usd_from_cents(cents: int) -> str:
+    value = Decimal(int(cents)) / Decimal(100)
+    return f"${value:,.2f}"
 
 
 def _dt_from_ts(ts: int) -> datetime:
@@ -423,6 +442,31 @@ def _format_hours_compact(total_seconds: int) -> str:
         s = f"{hours:.0f}"
     return s.rstrip("0").rstrip(".")
 
+
+def _compute_marginal_payment_cents(total_seconds: int) -> int:
+    total_seconds = max(0, int(total_seconds))
+    if total_seconds <= 0:
+        return 0
+
+    total_cents = Decimal(0)
+    for i, (start_hour, rate_cents_per_hour) in enumerate(PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR):
+        start_sec = int(start_hour) * 3600
+        if total_seconds <= start_sec:
+            break
+
+        if i + 1 < len(PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR):
+            next_start_sec = int(PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR[i + 1][0]) * 3600
+        else:
+            next_start_sec = total_seconds
+
+        seg_end = min(total_seconds, next_start_sec)
+        seg_seconds = max(0, seg_end - start_sec)
+        if seg_seconds <= 0:
+            continue
+
+        total_cents += (Decimal(seg_seconds) * Decimal(int(rate_cents_per_hour))) / Decimal(3600)
+
+    return int(total_cents.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 @dataclass(frozen=True)
@@ -859,18 +903,35 @@ class TimeTrackingCog(commands.Cog):
             week_start=week_start,
             week_offset=week_offset,
         )
+        return await self._compute_weekly_total_in_window(
+            guild_id=guild_id,
+            user_id=user_id,
+            now_ts=now_ts,
+            window_start=window.start_ts,
+            window_end=window.end_ts,
+        )
+
+    async def _compute_weekly_total_in_window(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        now_ts: int,
+        window_start: int,
+        window_end: int,
+    ) -> WeeklyTotal:
         rows = await self.db.list_sessions_overlapping_window(
             guild_id=guild_id,
             user_id=user_id,
-            window_start=window.start_ts,
-            window_end=window.end_ts,
+            window_start=int(window_start),
+            window_end=int(window_end),
         )
 
         total = 0
         for r in rows:
             s = int(r["started_at"])
             e = int(r["ended_at"]) if r["ended_at"] is not None else int(now_ts)
-            total += overlap_seconds(s, e, window.start_ts, window.end_ts)
+            total += overlap_seconds(s, e, int(window_start), int(window_end))
 
         return WeeklyTotal(user_id=user_id, total_seconds=total, session_count=len(rows))
 
@@ -1716,6 +1777,74 @@ class TimeTrackingCog(commands.Cog):
             )
         else:
             await interaction.response.send_message(embed=embed, view=ReportActionsView(self), ephemeral=True)
+
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.command(
+        name="payment-data",
+        description="Owner-only: show previous-week payouts per developer.",
+    )
+    async def payment_data(self, interaction: discord.Interaction) -> None:
+        if not await self._require_guild(interaction):
+            return
+        if not await self._require_restore_owner(interaction):
+            return
+
+        assert interaction.guild is not None
+        assert interaction.user is not None
+
+        now_ts = int(time.time())
+        settings = await self._get_settings(interaction.guild.id)
+        week_start = int(settings["week_start"])
+
+        grand_total_cents = 0
+        embed = discord.Embed(
+            title="Payment data (previous week)",
+            color=discord.Color.green(),
+            description=(
+                "Computed per developer-local timezone (`week_offset=-1`) "
+                "using marginal hour brackets."
+            ),
+        )
+
+        for user_id in PAYMENT_DEVELOPER_USER_IDS:
+            tz_name = self._resolve_user_timezone(user_id=int(user_id))
+            window = compute_week_window(
+                now=_dt_from_ts(now_ts),
+                tz_name=tz_name,
+                week_start=week_start,
+                week_offset=-1,
+            )
+            weekly = await self._compute_weekly_total_in_window(
+                guild_id=interaction.guild.id,
+                user_id=int(user_id),
+                now_ts=now_ts,
+                window_start=window.start_ts,
+                window_end=window.end_ts,
+            )
+            payment_cents = _compute_marginal_payment_cents(weekly.total_seconds)
+            grand_total_cents += payment_cents
+
+            hours = Decimal(int(weekly.total_seconds)) / Decimal(3600)
+            embed.add_field(
+                name=f"<@{int(user_id)}>",
+                value=(
+                    f"Timezone: `{tz_name}`\n"
+                    f"Week window: <t:{window.start_ts}:D> -> <t:{window.end_ts - 1}:D>\n"
+                    f"Hours: `{hours:.2f}` ({_format_duration(weekly.total_seconds)})\n"
+                    f"Sessions: `{weekly.session_count}`\n"
+                    f"Payment: **{_format_usd_from_cents(payment_cents)}**"
+                ),
+                inline=False,
+            )
+
+        embed.add_field(name="Total owed", value=f"**{_format_usd_from_cents(grand_total_cents)}**", inline=False)
+        embed.set_footer(
+            text=(
+                "Marginal rates: 0-10h@$30, 10-20h@$33, 20-30h@$36, "
+                "30-40h@$40, 40-50h@$45, 50h+@$50."
+            )
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="leaderboard", description="Show weekly totals for everyone who has sessions.")
     @app_commands.describe(week_offset="0=current week, -1=previous week")

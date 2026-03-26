@@ -9,6 +9,7 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/report [user] [week_offset]` weekly total for a specific user (defaults to you) 
 - `/leaderboard [week_offset]` weekly totals for everyone with sessions (day/week boundaries are localized to the timezone of the user who runs the command)
 - `/hourly-data [week_offset]` weekly heatmap: per weekday, two rows of 12 blocks (AM hours 0–11, PM 12–23, localized to the timezone of the user who runs the command); uses the same week/report-channel behavior as `/leaderboard`. Each user after the first gets their own embed; users 10+ share the last embed (up to 10 embeds per message)
+- `/payment-data` owner-only payout breakdown for the previous week, computed per developer-local week windows with marginal pay brackets
 - `/setreportchannel [channel]` (Manage Server/Admin) set the channel to post reports/leaderboards
 - `/postpanel` (Manage Server/Admin) post a persistent button panel (Start/Stop/Status) in the current channel
 - `/restoreday user week_offset weekday seconds` owner-only data restore tool (user id `761895875361505281`)
@@ -83,6 +84,20 @@ Use `/restoreday` to restore historical time after data-loss incidents.
 - Safety: if an active (open) session overlaps the target day, the command fails instead of mutating data
 
 The command resolves day boundaries using the invoking user's timezone mapping and configured week start, so DST-length days are handled correctly.
+
+## Payment command (`/payment-data`)
+- Visibility: restricted with `Manage Server` default permission and runtime owner check.
+- Allowed caller: only Discord user id `761895875361505281`.
+- Scope: computes **previous week** (`week_offset=-1`) per developer based on each developer's own mapped timezone week window.
+- Included developers: `1014149760204156938`, `629991962522681365`, `434418013916233755`.
+- Excluded from output: `761895875361505281` (owner).
+- Rates use marginal tiers:
+  - 0-10h at $30/hr
+  - 10-20h at $33/hr
+  - 20-30h at $36/hr
+  - 30-40h at $40/hr
+  - 40-50h at $45/hr
+  - 50h+ at $50/hr
 
 ## Automatic weekly leaderboard announcement
 The bot automatically posts a weekly leaderboard announcement:
