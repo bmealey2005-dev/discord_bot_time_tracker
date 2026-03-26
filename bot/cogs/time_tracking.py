@@ -940,6 +940,13 @@ class TimeTrackingCog(commands.Cog):
             window_end=window.end_ts,
         )
 
+    def _compute_weekly_earnings_cents(self, *, user_id: int, week_total_seconds: int) -> int:
+        """Compute current-week earnings only for explicitly configured users."""
+        brackets = PAYMENT_BRACKETS_RATE_CENTS_BY_USER.get(int(user_id))
+        if not brackets:
+            return 0
+        return _compute_marginal_payment_cents(int(week_total_seconds), brackets=brackets)
+
     async def _compute_weekly_total_in_window(
         self,
         *,
@@ -1660,6 +1667,10 @@ class TimeTrackingCog(commands.Cog):
             tz_name=tz_name,
             week_start=settings["week_start"],
         )
+        weekly_earnings_cents = self._compute_weekly_earnings_cents(
+            user_id=interaction.user.id,
+            week_total_seconds=weekly_total.total_seconds,
+        )
         nick_warning = await self._update_nickname_week_hours(
             interaction,
             week_total_seconds=weekly_total.total_seconds,
@@ -1688,6 +1699,7 @@ class TimeTrackingCog(commands.Cog):
         )
         embed.add_field(name="Today total", value=_format_duration(daily_total), inline=True)
         embed.add_field(name="This week total", value=_format_duration(weekly_total.total_seconds), inline=True)
+        embed.add_field(name="This week earnings", value=_format_usd_from_cents(weekly_earnings_cents), inline=True)
         embed.add_field(name="Week progress", value=f"{week_progress}\n{week_ends}", inline=False)
         embed.add_field(name="Day progress", value=f"{day_progress}\n{day_ends}", inline=False)
         if role_warning:
@@ -1747,6 +1759,10 @@ class TimeTrackingCog(commands.Cog):
             tz_name=tz_name,
             week_start=settings["week_start"],
         )
+        weekly_earnings_cents = self._compute_weekly_earnings_cents(
+            user_id=interaction.user.id,
+            week_total_seconds=weekly.total_seconds,
+        )
         nick_warning = await self._update_nickname_week_hours(
             interaction,
             week_total_seconds=weekly.total_seconds,
@@ -1763,6 +1779,7 @@ class TimeTrackingCog(commands.Cog):
         embed.add_field(name="Session duration", value=_format_duration(duration), inline=True)
         embed.add_field(name="Today total", value=_format_duration(daily_total), inline=True)
         embed.add_field(name="This week total", value=_format_duration(weekly.total_seconds), inline=True)
+        embed.add_field(name="This week earnings", value=_format_usd_from_cents(weekly_earnings_cents), inline=True)
         embed.add_field(name="Week progress", value=f"{week_progress}\n{week_ends}", inline=False)
         embed.add_field(name="Day progress", value=f"{day_progress}\n{day_ends}", inline=False)
         embed.add_field(name="Session start", value=discord.utils.format_dt(_dt_from_ts(started_at), style="F"), inline=True)
@@ -1811,6 +1828,10 @@ class TimeTrackingCog(commands.Cog):
             tz_name=tz_name,
             week_start=settings["week_start"],
         )
+        weekly_earnings_cents = self._compute_weekly_earnings_cents(
+            user_id=interaction.user.id,
+            week_total_seconds=weekly.total_seconds,
+        )
         nick_warning = await self._update_nickname_week_hours(
             interaction,
             week_total_seconds=weekly.total_seconds,
@@ -1828,6 +1849,7 @@ class TimeTrackingCog(commands.Cog):
             embed.add_field(name="Clocked in", value="No", inline=True)
             embed.add_field(name="Today total", value=_format_duration(daily_total), inline=True)
             embed.add_field(name="This week total", value=_format_duration(weekly.total_seconds), inline=True)
+            embed.add_field(name="This week earnings", value=_format_usd_from_cents(weekly_earnings_cents), inline=True)
             embed.add_field(name="Week progress", value=f"{week_progress}\n{week_ends}", inline=False)
             embed.add_field(name="Day progress", value=f"{day_progress}\n{day_ends}", inline=False)
             if role_warning:
@@ -1849,6 +1871,7 @@ class TimeTrackingCog(commands.Cog):
         embed.add_field(name="Today total", value=_format_duration(daily_total), inline=True)
         embed.add_field(name="Started", value=discord.utils.format_dt(_dt_from_ts(started_at), style="F"), inline=False)
         embed.add_field(name="This week total", value=_format_duration(weekly.total_seconds), inline=False)
+        embed.add_field(name="This week earnings", value=_format_usd_from_cents(weekly_earnings_cents), inline=False)
         embed.add_field(name="Week progress", value=f"{week_progress}\n{week_ends}", inline=False)
         embed.add_field(name="Day progress", value=f"{day_progress}\n{day_ends}", inline=False)
         if role_warning:

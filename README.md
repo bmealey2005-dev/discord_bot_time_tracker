@@ -22,6 +22,8 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 Weekly totals are computed from stored sessions using timezone-aware week windows. Data is kept (no destructive weekly reset); totals naturally \"reset\" when the week window changes.
 For private user-triggered outputs (`/start`, `/stop`, `/status`, `/report`, `/leaderboard`, `/hourly-data`, `/add-time`, `/subtract-time`, `/set-time`), time windows are localized to the invoking user's configured offset mapping (fallback `UTC+0`).
 
+`/start`, `/stop`, and `/status` also show **current-week earnings**. Earnings are computed from per-user payment brackets; if a user has no explicit brackets configured in `PAYMENT_BRACKETS_RATE_CENTS_BY_USER`, earnings display as `$0.00`.
+
 ## Discord app setup (one-time)
 1. Go to https://discord.com/developers/applications and create an application.
 2. Add a Bot user, then copy the bot token.
