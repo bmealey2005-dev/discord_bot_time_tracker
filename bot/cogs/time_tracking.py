@@ -59,14 +59,14 @@ USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
 DEFAULT_USER_TIMEZONE_OFFSET = "UTC+0"
 DEFAULT_CLOCKED_IN_ROLE_ID = 1475219245775196434
 HELP_VISIBLE_COMMANDS: tuple[tuple[str, str], ...] = (
-    ("/start [note]", "Start a work session timer."),
+    ("/start (note?)", "Start a work session timer."),
     ("/stop", "Stop your active work session."),
     ("/status", "Show whether you are clocked in and current totals."),
-    ("/leaderboard [week_offset]", "Show weekly totals for everyone with sessions."),
-    ("/hourly-data [week_offset]", "Show weekly per-user hourly heatmaps."),
-    ("/add-time date minutes", "Add minutes to your own logged time for one recent day."),
-    ("/subtract-time date minutes", "Subtract minutes from your own logged time for one recent day."),
-    ("/set-time date minutes", "Set your own logged minutes for one recent day exactly."),
+    ("/leaderboard (week_offset?)", "Show weekly totals for everyone with sessions."),
+    ("/hourly-data (week_offset?)", "Show weekly per-user hourly heatmaps."),
+    ("/add-time (date) (minutes)", "Add minutes to your own logged time for one recent day."),
+    ("/subtract-time (date) (minutes)", "Subtract minutes from your own logged time for one recent day."),
+    ("/set-time (date) (minutes)", "Set your own logged minutes for one recent day exactly."),
     ("/help", "List supported non-owner bot commands."),
 )
 
