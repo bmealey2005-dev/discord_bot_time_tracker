@@ -95,6 +95,40 @@ def _format_offline_trim_button_label(*, offline_started_at: int, now_ts: int) -
     return fallback if len(fallback) <= 80 else "Exclude offline time"
 
 
+def _compute_offline_time_breakdown(
+    *,
+    session_started_at: int,
+    offline_started_at: int,
+    now_ts: int,
+) -> tuple[int, int, int]:
+    session_started_at = int(session_started_at)
+    offline_started_at = int(offline_started_at)
+    now_ts = int(now_ts)
+
+    session_duration = max(0, now_ts - session_started_at)
+    offline_anchor = max(session_started_at, offline_started_at)
+    time_offline = max(0, now_ts - offline_anchor)
+    time_online = max(0, session_duration - time_offline)
+    return session_duration, time_online, time_offline
+
+
+def _add_offline_time_breakdown_fields(
+    embed: discord.Embed,
+    *,
+    session_started_at: int,
+    offline_started_at: int,
+    now_ts: int,
+) -> None:
+    session_duration, time_online, time_offline = _compute_offline_time_breakdown(
+        session_started_at=session_started_at,
+        offline_started_at=offline_started_at,
+        now_ts=now_ts,
+    )
+    embed.add_field(name="Session Duration", value=_format_duration(session_duration), inline=True)
+    embed.add_field(name="Time Online", value=_format_duration(time_online), inline=True)
+    embed.add_field(name="Time Offline", value=_format_duration(time_offline), inline=True)
+
+
 def _format_usd_from_cents(cents: int) -> str:
     value = Decimal(int(cents)) / Decimal(100)
     return f"${value:,.2f}"
@@ -1777,7 +1811,17 @@ class TimeTrackingCog(commands.Cog):
 
         offline_started_at = int(offline_started_at)
         now_ts = int(now_ts)
-        offline_duration = max(0, now_ts - offline_started_at)
+        active = await self.db.get_active_session(guild_id=member.guild.id, user_id=member.id)
+        if active is not None and int(active["id"]) == int(session_id):
+            session_started_at = int(active["started_at"])
+        else:
+            # Conservative fallback if active row changed between detection and prompting.
+            session_started_at = offline_started_at
+        _, _, time_offline = _compute_offline_time_breakdown(
+            session_started_at=session_started_at,
+            offline_started_at=offline_started_at,
+            now_ts=now_ts,
+        )
         view = OfflineReturnPromptView(
             self,
             user_id=member.id,
@@ -1785,16 +1829,24 @@ class TimeTrackingCog(commands.Cog):
             offline_started_at=offline_started_at,
             now_ts=now_ts,
         )
+        embed = discord.Embed(title="Offline session review", color=discord.Color.orange())
+        _add_offline_time_breakdown_fields(
+            embed,
+            session_started_at=session_started_at,
+            offline_started_at=offline_started_at,
+            now_ts=now_ts,
+        )
 
         content = (
             f"{member.mention} your time-logging session stayed active while your status was offline for "
-            f"**{_format_duration(offline_duration)}**.\n"
+            f"**{_format_duration(time_offline)}**.\n"
             f"Offline detected: {discord.utils.format_dt(_dt_from_ts(offline_started_at), style='F')}\n"
             "Choose one option below:"
         )
         try:
             message = await channel.send(
                 content=content,
+                embed=embed,
                 view=view,
                 allowed_mentions=discord.AllowedMentions(users=[member]),
             )
@@ -2256,12 +2308,20 @@ class TimeTrackingCog(commands.Cog):
             and offline_flag["resolved_at"] is None
             and int(offline_flag["session_id"]) == int(active["id"])
         ):
+            session_started_at = int(active["started_at"])
             offline_started_at = int(offline_flag["offline_started_at"])
             prompt = (
                 "You were detected offline during this active session and must choose how to resolve it before stopping.\n"
                 f"Offline detected: {discord.utils.format_dt(_dt_from_ts(offline_started_at), style='R')} "
                 f"({discord.utils.format_dt(_dt_from_ts(offline_started_at), style='F')})\n"
                 "Pick one option below:"
+            )
+            embed = discord.Embed(title="Offline session review", color=discord.Color.orange())
+            _add_offline_time_breakdown_fields(
+                embed,
+                session_started_at=session_started_at,
+                offline_started_at=offline_started_at,
+                now_ts=now_ts,
             )
             view = OfflineStopDecisionView(
                 self,
@@ -2271,9 +2331,9 @@ class TimeTrackingCog(commands.Cog):
                 now_ts=now_ts,
             )
             if interaction.response.is_done():
-                await interaction.followup.send(prompt, ephemeral=True, view=view)
+                await interaction.followup.send(prompt, embed=embed, ephemeral=True, view=view)
             else:
-                await interaction.response.send_message(prompt, ephemeral=True, view=view)
+                await interaction.response.send_message(prompt, embed=embed, ephemeral=True, view=view)
             return
 
         started_at = int(active["started_at"])
