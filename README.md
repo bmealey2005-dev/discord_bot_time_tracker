@@ -65,8 +65,6 @@ The bot stores raw sessions (start/end timestamps) and computes totals based on 
 - `DEFAULT_TIMEZONE` uses an IANA name like `UTC` or `America/Los_Angeles`
 - `DEFAULT_WEEK_START`: `0=Mon .. 6=Sun`
 
-You can also set the timezone per server with `/settimezone` (recommended once you deploy).
-
 On Windows, the `tzdata` dependency is included so IANA timezones work consistently.
 
 ## Hourly activity heatmap (`/hourly-data`)

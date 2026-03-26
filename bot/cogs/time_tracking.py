@@ -57,21 +57,16 @@ USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
     761895875361505281: "UTC-6",
 }
 DEFAULT_USER_TIMEZONE_OFFSET = "UTC+0"
+DEFAULT_CLOCKED_IN_ROLE_ID = 1475219245775196434
 HELP_VISIBLE_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/start [note]", "Start a work session timer."),
     ("/stop", "Stop your active work session."),
     ("/status", "Show whether you are clocked in and current totals."),
-    ("/report [user] [week_offset]", "Show weekly hours for a specific user (defaults to you)."),
     ("/leaderboard [week_offset]", "Show weekly totals for everyone with sessions."),
     ("/hourly-data [week_offset]", "Show weekly per-user hourly heatmaps."),
     ("/add-time date minutes", "Add minutes to your own logged time for one recent day."),
     ("/subtract-time date minutes", "Subtract minutes from your own logged time for one recent day."),
     ("/set-time date minutes", "Set your own logged minutes for one recent day exactly."),
-    ("/setreportchannel [channel]", "Set or clear the report posting channel (Manage Server/Admin)."),
-    ("/setclockedinrole [role]", "Set or clear the role applied while users are clocked in."),
-    ("/setnicknamehours enabled", "Enable or disable weekly-hours nickname suffix updates."),
-    ("/settimezone timezone", "Set timezone used for weekly boundaries."),
-    ("/postpanel", "Post persistent Start/Stop/Status button panel in current channel."),
     ("/help", "List supported non-owner bot commands."),
 )
 
@@ -930,6 +925,7 @@ class TimeTrackingCog(commands.Cog):
             guild_id=guild_id,
             default_timezone=self.default_timezone,
             default_week_start=self.default_week_start,
+            default_clocked_in_role_id=DEFAULT_CLOCKED_IN_ROLE_ID,
         )
         return await self.db.get_guild_settings(guild_id=guild_id)
 
@@ -2030,6 +2026,7 @@ class TimeTrackingCog(commands.Cog):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @app_commands.default_permissions(administrator=True)
     @app_commands.command(name="report", description="Show weekly hours for a scripter.")
     @app_commands.describe(user="Whose hours to report (defaults to you)", week_offset="0=current week, -1=previous week")
     async def report(
@@ -2039,6 +2036,8 @@ class TimeTrackingCog(commands.Cog):
         week_offset: app_commands.Range[int, -52, 52] = 0,
     ) -> None:
         if not await self._require_guild(interaction):
+            return
+        if not await self._require_restore_owner(interaction):
             return
 
         assert interaction.guild is not None
@@ -2441,6 +2440,7 @@ class TimeTrackingCog(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.default_permissions(administrator=True)
     @app_commands.command(name="setreportchannel", description="Set (or clear) the channel where reports get posted.")
     @app_commands.describe(channel="Channel to post reports in (omit to clear)")
     async def setreportchannel(
@@ -2450,17 +2450,11 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
+        if not await self._require_restore_owner(interaction):
+            return
 
         assert interaction.guild is not None
         assert interaction.user is not None
-
-        perms = interaction.user.guild_permissions
-        if not (perms.manage_guild or perms.administrator):
-            await interaction.response.send_message(
-                "You need `Manage Server` (or Administrator) to change the report channel.",
-                ephemeral=True,
-            )
-            return
 
         await self._get_settings(interaction.guild.id)
         await self.db.set_report_channel(guild_id=interaction.guild.id, channel_id=channel.id if channel else None)
@@ -2471,12 +2465,13 @@ class TimeTrackingCog(commands.Cog):
 
         await interaction.response.send_message(f"Report channel set to {channel.mention}.", ephemeral=True)
 
+    @app_commands.default_permissions(administrator=True)
     @app_commands.command(name="setclockedinrole", description="Set (or clear) the role to apply while users are clocked in.")
     @app_commands.describe(role="Role to add while clocked in (omit to clear)")
     async def setclockedinrole(self, interaction: discord.Interaction, role: discord.Role | None = None) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_manage_server(interaction):
+        if not await self._require_restore_owner(interaction):
             return
 
         assert interaction.guild is not None
@@ -2489,12 +2484,13 @@ class TimeTrackingCog(commands.Cog):
 
         await interaction.response.send_message(f"Clocked-in role set to {role.mention}.", ephemeral=True)
 
+    @app_commands.default_permissions(administrator=True)
     @app_commands.command(name="setnicknamehours", description="Enable/disable showing weekly hours in nicknames.")
     @app_commands.describe(enabled="If enabled, nicknames become like: Name (12h 30m)")
     async def setnicknamehours(self, interaction: discord.Interaction, enabled: bool) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_manage_server(interaction):
+        if not await self._require_restore_owner(interaction):
             return
 
         assert interaction.guild is not None
@@ -2504,34 +2500,12 @@ class TimeTrackingCog(commands.Cog):
         state = "enabled" if enabled else "disabled"
         await interaction.response.send_message(f"Nickname weekly-hours display {state}.", ephemeral=True)
 
-    @app_commands.command(name="settimezone", description="Set the timezone used for weekly boundaries (week begin/end).")
-    @app_commands.describe(timezone="IANA timezone, e.g. America/Chicago (Central Time)")
-    async def settimezone(self, interaction: discord.Interaction, timezone: str) -> None:
-        if not await self._require_guild(interaction):
-            return
-        if not await self._require_manage_server(interaction):
-            return
-
-        assert interaction.guild is not None
-
-        tz_name = self._normalize_timezone_input(timezone)
-        if not self._is_valid_timezone(tz_name):
-            await interaction.response.send_message(
-                "Invalid timezone. Use an IANA timezone like `America/Chicago`.\n"
-                "Examples: `UTC`, `America/Los_Angeles`, `America/Chicago`, `Europe/London`.",
-                ephemeral=True,
-            )
-            return
-
-        await self._get_settings(interaction.guild.id)
-        await self.db.set_timezone(guild_id=interaction.guild.id, timezone=tz_name)
-        await interaction.response.send_message(f"Timezone set to `{tz_name}`.", ephemeral=True)
-
+    @app_commands.default_permissions(administrator=True)
     @app_commands.command(name="postpanel", description="Post a persistent Start/Stop/Status button panel in this channel.")
     async def postpanel(self, interaction: discord.Interaction) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_manage_server(interaction):
+        if not await self._require_restore_owner(interaction):
             return
 
         assert interaction.guild is not None

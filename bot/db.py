@@ -175,18 +175,21 @@ class Database:
         guild_id: int,
         default_timezone: str,
         default_week_start: int,
+        default_clocked_in_role_id: int | None = None,
     ) -> None:
+        role_value = str(default_clocked_in_role_id) if default_clocked_in_role_id is not None else None
         if self._is_postgres:
             if self._pool is None:
                 raise RuntimeError("Database.connect() must be called first.")
             async with self._pool.acquire() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO guild_settings(guild_id, report_channel_id, timezone, week_start)
-                    VALUES($1, NULL, $2, $3)
+                    INSERT INTO guild_settings(guild_id, report_channel_id, clocked_in_role_id, timezone, week_start)
+                    VALUES($1, NULL, $2, $3, $4)
                     ON CONFLICT(guild_id) DO NOTHING;
                     """,
                     str(guild_id),
+                    role_value,
                     default_timezone,
                     int(default_week_start),
                 )
@@ -197,11 +200,11 @@ class Database:
 
         await self._conn.execute(
             """
-            INSERT INTO guild_settings(guild_id, report_channel_id, timezone, week_start)
-            VALUES(?, NULL, ?, ?)
+            INSERT INTO guild_settings(guild_id, report_channel_id, clocked_in_role_id, timezone, week_start)
+            VALUES(?, NULL, ?, ?, ?)
             ON CONFLICT(guild_id) DO NOTHING;
             """,
-            (str(guild_id), default_timezone, default_week_start),
+            (str(guild_id), role_value, default_timezone, default_week_start),
         )
         await self._conn.commit()
 
