@@ -1760,6 +1760,33 @@ class TimeTrackingCog(commands.Cog):
         except Exception as exc:
             print(f"Offline flag reconcile error: {exc!r}")
 
+    async def _send_ephemeral_interaction_message(self, interaction: discord.Interaction, content: str) -> None:
+        if interaction.response.is_done():
+            await interaction.followup.send(content, ephemeral=True)
+            return
+        await interaction.response.send_message(content, ephemeral=True)
+
+    async def _cleanup_offline_prompt_message(
+        self,
+        interaction: discord.Interaction,
+        *,
+        fallback_content: str = "Offline reminder resolved.",
+    ) -> None:
+        if interaction.message is None:
+            return
+        try:
+            await interaction.message.delete()
+            return
+        except discord.Forbidden:
+            pass
+        except discord.HTTPException:
+            pass
+
+        try:
+            await interaction.message.edit(content=fallback_content, view=None)
+        except discord.HTTPException:
+            pass
+
     async def _handle_offline_return_continue(self, interaction: discord.Interaction, *, session_id: int) -> None:
         if not await self._require_guild(interaction):
             return
@@ -1770,10 +1797,11 @@ class TimeTrackingCog(commands.Cog):
 
         flag = await self.db.get_session_offline_flag(guild_id=interaction.guild.id, user_id=interaction.user.id)
         if flag is None or flag["resolved_at"] is not None or int(flag["session_id"]) != int(session_id):
-            await interaction.response.edit_message(
-                content="This offline reminder is no longer active.",
-                view=None,
+            await self._send_ephemeral_interaction_message(
+                interaction,
+                "This offline reminder is no longer active.",
             )
+            await self._cleanup_offline_prompt_message(interaction)
             return
 
         active = await self.db.get_active_session(guild_id=interaction.guild.id, user_id=interaction.user.id)
@@ -1784,10 +1812,11 @@ class TimeTrackingCog(commands.Cog):
                 session_id=int(session_id),
                 resolved_at=now_ts,
             )
-            await interaction.response.edit_message(
-                content="Your session is already not active, so no action was needed.",
-                view=None,
+            await self._send_ephemeral_interaction_message(
+                interaction,
+                "Your session is already not active, so no action was needed.",
             )
+            await self._cleanup_offline_prompt_message(interaction)
             return
 
         await self.db.resolve_session_offline_flag(
@@ -1797,13 +1826,14 @@ class TimeTrackingCog(commands.Cog):
             resolved_at=now_ts,
         )
         started_at = int(active["started_at"])
-        await interaction.response.edit_message(
-            content=(
+        await self._send_ephemeral_interaction_message(
+            interaction,
+            (
                 "Kept your current session active.\n"
                 f"Session started: {discord.utils.format_dt(_dt_from_ts(started_at), style='F')}"
             ),
-            view=None,
         )
+        await self._cleanup_offline_prompt_message(interaction)
 
     async def _handle_offline_return_trim(self, interaction: discord.Interaction, *, session_id: int) -> None:
         if not await self._require_guild(interaction):
@@ -1815,10 +1845,11 @@ class TimeTrackingCog(commands.Cog):
 
         flag = await self.db.get_session_offline_flag(guild_id=interaction.guild.id, user_id=interaction.user.id)
         if flag is None or flag["resolved_at"] is not None or int(flag["session_id"]) != int(session_id):
-            await interaction.response.edit_message(
-                content="This offline reminder is no longer active.",
-                view=None,
+            await self._send_ephemeral_interaction_message(
+                interaction,
+                "This offline reminder is no longer active.",
             )
+            await self._cleanup_offline_prompt_message(interaction)
             return
 
         active = await self.db.get_active_session(guild_id=interaction.guild.id, user_id=interaction.user.id)
@@ -1829,10 +1860,11 @@ class TimeTrackingCog(commands.Cog):
                 session_id=int(session_id),
                 resolved_at=now_ts,
             )
-            await interaction.response.edit_message(
-                content="Your session is already not active, so there was nothing to trim.",
-                view=None,
+            await self._send_ephemeral_interaction_message(
+                interaction,
+                "Your session is already not active, so there was nothing to trim.",
             )
+            await self._cleanup_offline_prompt_message(interaction)
             return
 
         started_at = int(active["started_at"])
@@ -1877,7 +1909,8 @@ class TimeTrackingCog(commands.Cog):
         if extras:
             msg = msg + "\n" + "\n".join(extras)
 
-        await interaction.response.edit_message(content=msg, view=None)
+        await self._send_ephemeral_interaction_message(interaction, msg)
+        await self._cleanup_offline_prompt_message(interaction)
 
     @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member) -> None:
