@@ -57,6 +57,23 @@ USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
     761895875361505281: "UTC-6",
 }
 DEFAULT_USER_TIMEZONE_OFFSET = "UTC+0"
+HELP_VISIBLE_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("/start [note]", "Start a work session timer."),
+    ("/stop", "Stop your active work session."),
+    ("/status", "Show whether you are clocked in and current totals."),
+    ("/report [user] [week_offset]", "Show weekly hours for a specific user (defaults to you)."),
+    ("/leaderboard [week_offset]", "Show weekly totals for everyone with sessions."),
+    ("/hourly-data [week_offset]", "Show weekly per-user hourly heatmaps."),
+    ("/add-time date minutes", "Add minutes to your own logged time for one recent day."),
+    ("/subtract-time date minutes", "Subtract minutes from your own logged time for one recent day."),
+    ("/set-time date minutes", "Set your own logged minutes for one recent day exactly."),
+    ("/setreportchannel [channel]", "Set or clear the report posting channel (Manage Server/Admin)."),
+    ("/setclockedinrole [role]", "Set or clear the role applied while users are clocked in."),
+    ("/setnicknamehours enabled", "Enable or disable weekly-hours nickname suffix updates."),
+    ("/settimezone timezone", "Set timezone used for weekly boundaries."),
+    ("/postpanel", "Post persistent Start/Stop/Status button panel in current channel."),
+    ("/help", "List supported non-owner bot commands."),
+)
 
 
 def _format_duration(total_seconds: int) -> str:
@@ -1995,6 +2012,23 @@ class TimeTrackingCog(commands.Cog):
     @app_commands.command(name="status", description="See whether you're clocked in and your current timer.")
     async def status(self, interaction: discord.Interaction) -> None:
         await self._handle_status(interaction)
+
+    @app_commands.command(name="help", description="List supported bot commands (non-owner).")
+    async def help(self, interaction: discord.Interaction) -> None:
+        if not await self._require_guild(interaction):
+            return
+
+        embed = discord.Embed(
+            title="Time-Logging bot commands",
+            color=discord.Color.blurple(),
+            description="Available commands (owner-only commands are intentionally hidden).",
+        )
+        lines = [f"`{cmd}` - {desc}" for cmd, desc in HELP_VISIBLE_COMMANDS]
+        embed.description = (
+            "Available commands (owner-only commands are intentionally hidden).\n\n"
+            + "\n".join(lines)
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="report", description="Show weekly hours for a scripter.")
     @app_commands.describe(user="Whose hours to report (defaults to you)", week_offset="0=current week, -1=previous week")
