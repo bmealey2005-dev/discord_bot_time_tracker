@@ -53,13 +53,13 @@ PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
 USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
     1014149760204156938: "UTC+0",
     629991962522681365: "UTC+1",
-    434418013916233755: "UTC+1",
+    434418013916233755: "UTC+1", 
     761895875361505281: "UTC-6",
 }
 DEFAULT_USER_TIMEZONE_OFFSET = "UTC+0"
 DEFAULT_CLOCKED_IN_ROLE_ID = 1475219245775196434
 HELP_VISIBLE_COMMANDS: tuple[tuple[str, str], ...] = (
-    ("**/start [note]**", "Start a work session timer."),
+    ("/start [note]", "Start a work session timer."),
     ("/stop", "Stop your active work session."),
     ("/status", "Show whether you are clocked in and current totals."),
     ("/leaderboard [week_offset]", "Show weekly totals for everyone with sessions."),
@@ -2019,7 +2019,7 @@ class TimeTrackingCog(commands.Cog):
             color=discord.Color.blurple(),
             description="Available commands (owner-only commands are intentionally hidden).",
         )
-        lines = [f"`{cmd}` - {desc}" for cmd, desc in HELP_VISIBLE_COMMANDS]
+        lines = [f"**`{cmd}`** - {desc}" for cmd, desc in HELP_VISIBLE_COMMANDS]
         embed.description = (
             "Available commands (owner-only commands are intentionally hidden).\n\n"
             + "\n".join(lines)
