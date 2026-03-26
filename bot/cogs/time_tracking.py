@@ -37,7 +37,7 @@ PAYMENT_DEVELOPER_USER_IDS: tuple[int, ...] = (
     629991962522681365,
     434418013916233755,
 )
-PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR: tuple[tuple[int, int], ...] = (
+DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR: tuple[tuple[int, int], ...] = (
     (0, 3000),
     (10, 3300),
     (20, 3600),
@@ -45,6 +45,11 @@ PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR: tuple[tuple[int, int], ...] = (
     (40, 4500),
     (50, 5000),
 )
+PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
+    1014149760204156938: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
+    629991962522681365: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
+    434418013916233755: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
+}
 USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
     1014149760204156938: "UTC+0",
     629991962522681365: "UTC+1",
@@ -443,19 +448,43 @@ def _format_hours_compact(total_seconds: int) -> str:
     return s.rstrip("0").rstrip(".")
 
 
-def _compute_marginal_payment_cents(total_seconds: int) -> int:
+def _payment_brackets_for_user(user_id: int) -> tuple[tuple[int, int], ...]:
+    return PAYMENT_BRACKETS_RATE_CENTS_BY_USER.get(
+        int(user_id),
+        DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
+    )
+
+
+def _format_payment_brackets_short(brackets: tuple[tuple[int, int], ...]) -> str:
+    parts: list[str] = []
+    for i, (start_hour, rate_cents) in enumerate(brackets):
+        rate = Decimal(int(rate_cents)) / Decimal(100)
+        if i + 1 < len(brackets):
+            end_hour = int(brackets[i + 1][0])
+            parts.append(f"{int(start_hour)}-{end_hour}h@${rate:.0f}")
+        else:
+            parts.append(f"{int(start_hour)}h+@${rate:.0f}")
+    return ", ".join(parts)
+
+
+def _compute_marginal_payment_cents(
+    total_seconds: int,
+    *,
+    brackets: tuple[tuple[int, int], ...] | None = None,
+) -> int:
     total_seconds = max(0, int(total_seconds))
     if total_seconds <= 0:
         return 0
 
+    rate_brackets = brackets if brackets is not None else DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR
     total_cents = Decimal(0)
-    for i, (start_hour, rate_cents_per_hour) in enumerate(PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR):
+    for i, (start_hour, rate_cents_per_hour) in enumerate(rate_brackets):
         start_sec = int(start_hour) * 3600
         if total_seconds <= start_sec:
             break
 
-        if i + 1 < len(PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR):
-            next_start_sec = int(PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR[i + 1][0]) * 3600
+        if i + 1 < len(rate_brackets):
+            next_start_sec = int(rate_brackets[i + 1][0]) * 3600
         else:
             next_start_sec = total_seconds
 
@@ -1821,17 +1850,29 @@ class TimeTrackingCog(commands.Cog):
                 window_start=window.start_ts,
                 window_end=window.end_ts,
             )
-            payment_cents = _compute_marginal_payment_cents(weekly.total_seconds)
+            brackets = _payment_brackets_for_user(int(user_id))
+            payment_cents = _compute_marginal_payment_cents(weekly.total_seconds, brackets=brackets)
             grand_total_cents += payment_cents
 
+            member = interaction.guild.get_member(int(user_id))
+            if member is None:
+                try:
+                    member = await interaction.guild.fetch_member(int(user_id))
+                except discord.HTTPException:
+                    member = None
+
+            display_name = member.display_name if member is not None else str(int(user_id))
+            mention = member.mention if member is not None else f"<@{int(user_id)}>"
             hours = Decimal(int(weekly.total_seconds)) / Decimal(3600)
             embed.add_field(
-                name=f"<@{int(user_id)}>",
+                name=display_name[:256],
                 value=(
+                    f"User: {mention} (`{int(user_id)}`)\n"
                     f"Timezone: `{tz_name}`\n"
                     f"Week window: <t:{window.start_ts}:D> -> <t:{window.end_ts - 1}:D>\n"
                     f"Hours: `{hours:.2f}` ({_format_duration(weekly.total_seconds)})\n"
                     f"Sessions: `{weekly.session_count}`\n"
+                    f"Rates: `{_format_payment_brackets_short(brackets)}`\n"
                     f"Payment: **{_format_usd_from_cents(payment_cents)}**"
                 ),
                 inline=False,
@@ -1840,8 +1881,7 @@ class TimeTrackingCog(commands.Cog):
         embed.add_field(name="Total owed", value=f"**{_format_usd_from_cents(grand_total_cents)}**", inline=False)
         embed.set_footer(
             text=(
-                "Marginal rates: 0-10h@$30, 10-20h@$33, 20-30h@$36, "
-                "30-40h@$40, 40-50h@$45, 50h+@$50."
+                "Marginal rates are configured per user in PAYMENT_BRACKETS_RATE_CENTS_BY_USER."
             )
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)

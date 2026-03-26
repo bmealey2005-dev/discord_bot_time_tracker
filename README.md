@@ -91,13 +91,15 @@ The command resolves day boundaries using the invoking user's timezone mapping a
 - Scope: computes **previous week** (`week_offset=-1`) per developer based on each developer's own mapped timezone week window.
 - Included developers: `1014149760204156938`, `629991962522681365`, `434418013916233755`.
 - Excluded from output: `761895875361505281` (owner).
-- Rates use marginal tiers:
-  - 0-10h at $30/hr
-  - 10-20h at $33/hr
-  - 20-30h at $36/hr
-  - 30-40h at $40/hr
-  - 40-50h at $45/hr
-  - 50h+ at $50/hr
+- Output shows each developer's display name and mention (`@user`) with ID for clarity.
+- Rates are configured per user in `bot/cogs/time_tracking.py` via `PAYMENT_BRACKETS_RATE_CENTS_BY_USER`.
+  - Default marginal tiers currently set to:
+    - 0-10h at $30/hr
+    - 10-20h at $33/hr
+    - 20-30h at $36/hr
+    - 30-40h at $40/hr
+    - 40-50h at $45/hr
+    - 50h+ at $50/hr
 
 ## Automatic weekly leaderboard announcement
 The bot automatically posts a weekly leaderboard announcement:
