@@ -9,6 +9,9 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/report [user] [week_offset]` weekly total for a specific user (defaults to you) 
 - `/leaderboard [week_offset]` weekly totals for everyone with sessions (day/week boundaries are localized to the timezone of the user who runs the command)
 - `/hourly-data [week_offset]` weekly heatmap: per weekday, two rows of 12 blocks (AM hours 0–11, PM 12–23, localized to the timezone of the user who runs the command); uses the same week/report-channel behavior as `/leaderboard`. Each user after the first gets their own embed; users 10+ share the last embed (up to 10 embeds per message)
+- `/add-time date minutes` add minutes to your own logged day total (last 7 invoker-local days only) with required public audit message
+- `/subtract-time date minutes` subtract minutes from your own logged day total (last 7 invoker-local days only) with required public audit message
+- `/set-time date minutes` set your own logged day total exactly (last 7 invoker-local days only) with required public audit message
 - `/payment-data` owner-only payout breakdown for the previous week, computed per developer-local week windows with marginal pay brackets
 - `/setreportchannel [channel]` (Manage Server/Admin) set the channel to post reports/leaderboards
 - `/postpanel` (Manage Server/Admin) post a persistent button panel (Start/Stop/Status) in the current channel
@@ -17,7 +20,7 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/testweeklyannouncement` developer-only command to post immediate announcement preview in current channel (no dedupe)
 
 Weekly totals are computed from stored sessions using timezone-aware week windows. Data is kept (no destructive weekly reset); totals naturally \"reset\" when the week window changes.
-For private user-triggered outputs (`/start`, `/stop`, `/status`, `/report`, `/leaderboard`, `/hourly-data`), time windows are localized to the invoking user's configured offset mapping (fallback `UTC+0`).
+For private user-triggered outputs (`/start`, `/stop`, `/status`, `/report`, `/leaderboard`, `/hourly-data`, `/add-time`, `/subtract-time`, `/set-time`), time windows are localized to the invoking user's configured offset mapping (fallback `UTC+0`).
 
 ## Discord app setup (one-time)
 1. Go to https://discord.com/developers/applications and create an application.
@@ -84,6 +87,23 @@ Use `/restoreday` to restore historical time after data-loss incidents.
 - Safety: if an active (open) session overlaps the target day, the command fails instead of mutating data
 
 The command resolves day boundaries using the invoking user's timezone mapping and configured week start, so DST-length days are handled correctly.
+
+## Self-service correction commands
+Use `/add-time`, `/subtract-time`, or `/set-time` to correct your own day totals.
+
+- Scope: self-only (no user argument; you can only change your own data)
+- Date input: must be one of the last 7 days in your invoker-local timezone (Today + previous 6 days)
+- Amount input: `minutes` (not seconds)
+- Behavior:
+  - `/add-time`: adds minutes to that day
+  - `/subtract-time`: subtracts minutes from that day
+  - `/set-time`: replaces that day total with an exact minute value
+- Safety:
+  - command validates day-length limits (DST-safe local day windows)
+  - command fails if there is an overlapping active session (same protection as restore)
+- Audit requirement:
+  - each successful use posts a **public audit embed** in the same channel
+  - audit includes user, command, date/timezone, before, after, and signed delta
 
 ## Payment command (`/payment-data`)
 - Visibility: restricted with `Manage Server` default permission and runtime owner check.

@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, timedelta, timezone, time as dt_time
+from datetime import date as dt_date, datetime, timedelta, timezone, time as dt_time
 import time
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 import aiosqlite
 import discord
@@ -999,6 +999,231 @@ class TimeTrackingCog(commands.Cog):
             total += overlap_seconds(s, e, day_start_ts, day_end_ts)
         return int(total)
 
+    def _recent_adjustment_date_options(
+        self,
+        *,
+        now_ts: int,
+        tz_name: str,
+        days: int = 7,
+    ) -> list[tuple[str, str, dt_date]]:
+        """Return [(label, value, local_date)] for today + previous days in invoker-local time."""
+        try:
+            tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            tz = ZoneInfo("UTC")
+
+        local_today = datetime.fromtimestamp(int(now_ts), tz=timezone.utc).astimezone(tz).date()
+        out: list[tuple[str, str, dt_date]] = []
+        for i in range(max(1, int(days))):
+            d = local_today - timedelta(days=i)
+            if i == 0:
+                label = f"Today ({d.strftime('%A')})"
+            else:
+                label = f"{d.strftime('%B')} {d.day} ({d.strftime('%A')})"
+            out.append((label, d.isoformat(), d))
+        return out
+
+    def _parse_recent_adjustment_date(
+        self,
+        *,
+        selected_value: str,
+        now_ts: int,
+        tz_name: str,
+    ) -> tuple[str, dt_date] | None:
+        for label, value, local_date in self._recent_adjustment_date_options(
+            now_ts=now_ts,
+            tz_name=tz_name,
+            days=7,
+        ):
+            if value == str(selected_value):
+                return label, local_date
+        return None
+
+    def _local_day_window_for_date(self, *, local_date: dt_date, tz_name: str) -> tuple[int, int]:
+        try:
+            tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            tz = ZoneInfo("UTC")
+        start_local = datetime.combine(local_date, dt_time.min, tzinfo=tz)
+        end_local = start_local + timedelta(days=1)
+        return int(start_local.timestamp()), int(end_local.timestamp())
+
+    async def _recent_adjustment_date_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        if interaction.user is None:
+            return []
+
+        now_ts = int(time.time())
+        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        options = self._recent_adjustment_date_options(now_ts=now_ts, tz_name=tz_name, days=7)
+        q = (current or "").strip().lower()
+
+        choices: list[app_commands.Choice[str]] = []
+        for label, value, _ in options:
+            if q and q not in label.lower() and q not in value.lower():
+                continue
+            choices.append(app_commands.Choice(name=label[:100], value=value))
+        return choices[:25]
+
+    async def _handle_self_time_adjustment(
+        self,
+        interaction: discord.Interaction,
+        *,
+        mode: Literal["add", "subtract", "set"],
+        date_value: str,
+        minutes: int,
+        command_name: str,
+    ) -> None:
+        if not await self._require_guild(interaction):
+            return
+
+        assert interaction.guild is not None
+        assert interaction.user is not None
+
+        channel = interaction.channel
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            await interaction.response.send_message(
+                "This command must be used in a text channel/thread so I can post the required public audit message.",
+                ephemeral=True,
+            )
+            return
+
+        if self.bot.user is not None:
+            me = interaction.guild.get_member(self.bot.user.id)
+            if me is not None:
+                perms = channel.permissions_for(me)
+                can_send = bool(perms.send_messages)
+                can_send_thread = bool(getattr(perms, "send_messages_in_threads", True))
+                if not can_send or (isinstance(channel, discord.Thread) and not can_send_thread):
+                    await interaction.response.send_message(
+                        "I need permission to send messages in this channel to post the required public audit log.",
+                        ephemeral=True,
+                    )
+                    return
+
+        now_ts = int(time.time())
+        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        parsed = self._parse_recent_adjustment_date(
+            selected_value=str(date_value),
+            now_ts=now_ts,
+            tz_name=tz_name,
+        )
+        if parsed is None:
+            await interaction.response.send_message(
+                "Invalid date. Please choose one of the last 7 days from the date suggestions.",
+                ephemeral=True,
+            )
+            return
+        date_label, local_date = parsed
+        day_start_ts, day_end_ts = self._local_day_window_for_date(local_date=local_date, tz_name=tz_name)
+        day_len = int(day_end_ts) - int(day_start_ts)
+
+        day_current = await self._compute_weekly_total_in_window(
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+            now_ts=now_ts,
+            window_start=day_start_ts,
+            window_end=day_end_ts,
+        )
+        before_seconds = int(day_current.total_seconds)
+        delta_seconds = max(0, int(minutes)) * 60
+
+        if mode == "add":
+            target_seconds = before_seconds + delta_seconds
+        elif mode == "subtract":
+            target_seconds = before_seconds - delta_seconds
+        else:
+            target_seconds = delta_seconds
+
+        if target_seconds < 0:
+            await interaction.response.send_message(
+                f"That would make your total negative. Current day total is {_format_duration(before_seconds)}.",
+                ephemeral=True,
+            )
+            return
+        if target_seconds > day_len:
+            max_minutes = day_len // 60
+            await interaction.response.send_message(
+                f"Target exceeds this local day length. Max for `{date_label}` in `{tz_name}` is {max_minutes} minutes.",
+                ephemeral=True,
+            )
+            return
+
+        note = f"manual {mode}-time by {interaction.user.id}"
+        try:
+            replaced_previous = await self.db.replace_user_day_total_seconds(
+                guild_id=interaction.guild.id,
+                user_id=interaction.user.id,
+                day_start_ts=day_start_ts,
+                day_end_ts=day_end_ts,
+                target_seconds=int(target_seconds),
+                note=note,
+            )
+        except ValueError as exc:
+            await interaction.response.send_message(
+                f"Adjustment failed: {exc}",
+                ephemeral=True,
+            )
+            return
+
+        before_seconds = int(replaced_previous)
+        after_seconds = int(target_seconds)
+        diff_seconds = after_seconds - before_seconds
+        diff_sign = "+" if diff_seconds >= 0 else "-"
+        diff_abs = abs(diff_seconds)
+
+        audit_embed = discord.Embed(
+            title="Manual time adjustment",
+            color=discord.Color.orange(),
+            description=(
+                f"{interaction.user.mention} used `{command_name}` for **{date_label}** "
+                f"(timezone `{tz_name}`)."
+            ),
+        )
+        audit_embed.add_field(name="Before", value=f"{_format_duration(before_seconds)} (`{before_seconds}s`)", inline=True)
+        audit_embed.add_field(name="After", value=f"{_format_duration(after_seconds)} (`{after_seconds}s`)", inline=True)
+        audit_embed.add_field(
+            name="Delta",
+            value=f"{diff_sign}{_format_duration(diff_abs)} (`{diff_sign}{diff_abs}s`)",
+            inline=True,
+        )
+        audit_embed.set_footer(text="Audit log for manual self-service correction.")
+
+        try:
+            await channel.send(embed=audit_embed)
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "Adjustment applied, but I could not post the required public audit message due to missing permissions.",
+                ephemeral=True,
+            )
+            return
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                "Adjustment applied, but posting the required public audit message failed due to a Discord API error.",
+                ephemeral=True,
+            )
+            return
+
+        confirm_embed = discord.Embed(
+            title="Time adjusted",
+            color=discord.Color.green(),
+        )
+        confirm_embed.add_field(name="Date", value=f"{date_label} (`{tz_name}`)", inline=False)
+        confirm_embed.add_field(
+            name="Change",
+            value=(
+                f"Before: {_format_duration(before_seconds)}\n"
+                f"After: {_format_duration(after_seconds)}\n"
+                f"Delta: {diff_sign}{_format_duration(diff_abs)}"
+            ),
+            inline=False,
+        )
+        confirm_embed.set_footer(text="A public audit message was posted in this channel.")
+        await interaction.response.send_message(embed=confirm_embed, ephemeral=True)
+
     def _format_week_progress(self, *, now_ts: int, window_start: int, window_end: int) -> tuple[str, str]:
         window_len = max(1, int(window_end) - int(window_start))
         week_pct = _clamp01((int(now_ts) - int(window_start)) / window_len)
@@ -1806,6 +2031,87 @@ class TimeTrackingCog(commands.Cog):
             )
         else:
             await interaction.response.send_message(embed=embed, view=ReportActionsView(self), ephemeral=True)
+
+    @app_commands.command(name="add-time", description="Add minutes to your logged time for one recent day.")
+    @app_commands.describe(
+        date="Today or one of the previous 6 days",
+        minutes="Minutes to add",
+    )
+    async def add_time(
+        self,
+        interaction: discord.Interaction,
+        date: str,
+        minutes: app_commands.Range[int, 1, 2880],
+    ) -> None:
+        await self._handle_self_time_adjustment(
+            interaction,
+            mode="add",
+            date_value=date,
+            minutes=int(minutes),
+            command_name="/add-time",
+        )
+
+    @add_time.autocomplete("date")
+    async def add_time_date_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._recent_adjustment_date_autocomplete(interaction, current)
+
+    @app_commands.command(name="subtract-time", description="Subtract minutes from your logged time for one recent day.")
+    @app_commands.describe(
+        date="Today or one of the previous 6 days",
+        minutes="Minutes to subtract",
+    )
+    async def subtract_time(
+        self,
+        interaction: discord.Interaction,
+        date: str,
+        minutes: app_commands.Range[int, 1, 2880],
+    ) -> None:
+        await self._handle_self_time_adjustment(
+            interaction,
+            mode="subtract",
+            date_value=date,
+            minutes=int(minutes),
+            command_name="/subtract-time",
+        )
+
+    @subtract_time.autocomplete("date")
+    async def subtract_time_date_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._recent_adjustment_date_autocomplete(interaction, current)
+
+    @app_commands.command(name="set-time", description="Set your logged minutes for one recent day exactly.")
+    @app_commands.describe(
+        date="Today or one of the previous 6 days",
+        minutes="Exact total minutes for that day",
+    )
+    async def set_time(
+        self,
+        interaction: discord.Interaction,
+        date: str,
+        minutes: app_commands.Range[int, 0, 2880],
+    ) -> None:
+        await self._handle_self_time_adjustment(
+            interaction,
+            mode="set",
+            date_value=date,
+            minutes=int(minutes),
+            command_name="/set-time",
+        )
+
+    @set_time.autocomplete("date")
+    async def set_time_date_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        return await self._recent_adjustment_date_autocomplete(interaction, current)
 
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.command(
