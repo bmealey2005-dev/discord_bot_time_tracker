@@ -111,16 +111,10 @@ Use `/add-time`, `/subtract-time`, or `/set-time` to correct your own day totals
 When a user has an active session and their Discord status changes to offline, the bot stores that detection timestamp but does not auto-stop immediately.
 
 - On return to any non-offline status, the bot posts a prompt in channel `1475250429926572112` mentioning the user.
-- Return prompt options:
+- Prompt options:
   - **Continue session**: keeps the active session unchanged.
-  - **Exclude offline time (x)**: closes the current session at the originally detected offline timestamp. `x` is the amount of session time that remains logged after trimming.
-- If the user attempts `/stop` (or uses a Stop button) while this offline marker is unresolved, normal stop is blocked and the bot shows an **ephemeral** chooser instead.
-- Stop-block chooser options:
-  - **Stop session now**
-  - **Exclude offline time (x)**
-- The stop-block chooser also shows **Offline detected** with relative and full timestamps.
+  - **Trim to offline timestamp**: closes the current session at the originally detected offline timestamp.
 - The prompt is only actionable by the mentioned user.
-- After either chooser action, the original non-ephemeral `#time-logging` ping message is deleted if it still exists.
 - If the session is already stopped by the time they return, the offline marker is resolved automatically.
 
 ## Payment command (`/payment-data`)
