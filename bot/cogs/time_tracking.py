@@ -118,7 +118,7 @@ HELP_VISIBLE_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/start (note?)", "Start a work session timer."),
     ("/stop", "Stop your active work session."),
     ("/status", "Show whether you are clocked in and current totals."),
-    ("/weekly-earnings (week_offset?)", "Show your earnings for a given week."),
+    ("/weekly-earnings (week_offset?)", "Show your own weekly earnings from logged time (whitelisted roles)."),
     ("/leaderboard (week_offset?)", "Show weekly totals for everyone with sessions."),
     ("/hourly-data (week_offset?)", "Show weekly per-user hourly heatmaps."),
     ("/add-time (date) (minutes)", "Add minutes to your own logged time for one recent day."),
@@ -2839,7 +2839,7 @@ class TimeTrackingCog(commands.Cog):
         payment_cents = _compute_marginal_payment_cents(weekly.total_seconds, brackets=brackets)
         hours = Decimal(int(weekly.total_seconds)) / Decimal(3600)
 
-        embed = discord.Embed(title="Your payment", color=discord.Color.green())
+        embed = discord.Embed(title="Your weekly earnings", color=discord.Color.green())
         embed.add_field(name="User", value=interaction.user.mention, inline=False)
         embed.add_field(name="Timezone", value=f"`{tz_name}`", inline=True)
         embed.add_field(name="Week offset", value=f"`{int(week_offset)}`", inline=True)
@@ -2851,7 +2851,7 @@ class TimeTrackingCog(commands.Cog):
         embed.add_field(name="Hours", value=f"`{hours:.2f}` ({_format_duration(weekly.total_seconds)})", inline=True)
         embed.add_field(name="Sessions", value=f"`{weekly.session_count}`", inline=True)
         embed.add_field(name="Rates", value=f"`{_format_payment_brackets_short(brackets)}`", inline=False)
-        embed.add_field(name="Payment", value=f"**{_format_usd_from_cents(payment_cents)}**", inline=False)
+        embed.add_field(name="Earnings", value=f"**{_format_usd_from_cents(payment_cents)}**", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="start", description="Start a work session timer.")
@@ -2871,7 +2871,10 @@ class TimeTrackingCog(commands.Cog):
     async def help(self, interaction: discord.Interaction) -> None:
         await self._handle_help(interaction)
 
-    @app_commands.command(name="weekly-earnings", description="Show your earnings for a week (defaults to current week).")
+    @app_commands.command(
+        name="weekly-earnings",
+        description="Your weekly earnings from logged time (default: current week). Owner summary: /payment-data.",
+    )
     @app_commands.describe(week_offset="0=current week, -1=previous week")
     async def weekly_earnings(
         self,
