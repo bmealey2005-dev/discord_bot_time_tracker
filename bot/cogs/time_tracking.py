@@ -93,6 +93,9 @@ PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
     USER_ID_BY_USERNAME["alex"]: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
     USER_ID_BY_USERNAME["wharkk"]: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
     USER_ID_BY_USERNAME["yandere"]: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
+    USER_ID_BY_USERNAME["wizoo"]: (
+        (0, 3000),
+    ),
     USER_ID_BY_USERNAME["maus"]: (
         (0, 3500),
         (10, 3750),
@@ -100,6 +103,12 @@ PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
         (30, 4500),
         (40, 5000),
         (50, 6000),
+    ),
+    USER_ID_BY_USERNAME["BabooCN"]: (
+        (0, 1500),
+    ),
+    USER_ID_BY_USERNAME["me"]: (
+        (0, 0),
     ),
 }
 # IANA tz names (Region/City) so week/day boundaries follow DST. Adjust per person's real location.
