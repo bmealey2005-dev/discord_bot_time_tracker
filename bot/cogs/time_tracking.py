@@ -27,14 +27,9 @@ USER_ID_BY_USERNAME: dict[str, int] = {
     "BabooCN": 753035328377454612,
 }
 
-CHANNEL_ID_BY_NAME: dict[str, int] = {
-    "general": 1468690277563764812,
-    "time-logging": 1475250429926572112,
-    "announcements": 1469817014448029807,
-    "private": 1469800147000103136,
-}
-PUBLIC_BOT_MESSAGES_CHANNEL_ID = CHANNEL_ID_BY_NAME["general"]
-PANEL_CHANNEL_ID = CHANNEL_ID_BY_NAME["time-logging"]
+RESTORE_OWNER_USER_ID = USER_ID_BY_USERNAME["me"]
+OFFLINE_RETURN_PROMPT_CHANNEL_ID = 1475250429926572112
+TIME_ADJUSTMENT_AUDIT_CHANNEL_ID = 1468690277563764812
 WEEKDAY_MON_INDEX = {
     "monday": 0,
     "tuesday": 1,
@@ -44,6 +39,7 @@ WEEKDAY_MON_INDEX = {
     "saturday": 5,
     "sunday": 6,
 }
+WEEKLY_ANNOUNCEMENT_CHANNEL_ID = 1469817014448029807
 # Fixed UTC-6 (year-round, no DST) for shared public weekly announcements.
 WEEKLY_ANNOUNCEMENT_TIMEZONE = "Etc/GMT+6"
 WEEKLY_ANNOUNCEMENT_WEEK_START = 0  # Monday
@@ -56,102 +52,12 @@ PAYMENT_DEVELOPER_USER_IDS: tuple[int, ...] = (
     USER_ID_BY_USERNAME["maus"],
     USER_ID_BY_USERNAME["BabooCN"],
 )
-ROLE_ID_BY_NAME: dict[str, int] = {
-    "owner": 1468691610899321029,
-    "admin": 1470609632132202526,
-    "ui-artists": 1479224753792221234,
-    "ugc-creators": 1487967901494280202,
-}
-ALL_WHITELISTED_ROLE_IDS: tuple[int, ...] = (
-    ROLE_ID_BY_NAME["owner"],
-    ROLE_ID_BY_NAME["admin"],
-    ROLE_ID_BY_NAME["ui-artists"],
-    ROLE_ID_BY_NAME["ugc-creators"],
+REQUIRED_COMMAND_ROLE_IDS: tuple[int, ...] = (
+    1468691610899321029, # Owner
+    1470609632132202526, # Scripters
+    1479224753792221234, # UI Artists
+    1487967901494280202 # UGC Creators
 )
-COMMAND_ALLOWED_ROLE_IDS_BY_NAME: dict[str, tuple[int, ...]] = {
-    # Member commands
-    "start": (
-        ROLE_ID_BY_NAME["owner"],
-        ROLE_ID_BY_NAME["admin"],
-        ROLE_ID_BY_NAME["ui-artists"],
-        ROLE_ID_BY_NAME["ugc-creators"],
-    ),
-    "stop": (
-        ROLE_ID_BY_NAME["owner"],
-        ROLE_ID_BY_NAME["admin"],
-        ROLE_ID_BY_NAME["ui-artists"],
-        ROLE_ID_BY_NAME["ugc-creators"],
-    ),
-    "status": (
-        ROLE_ID_BY_NAME["owner"],
-        ROLE_ID_BY_NAME["admin"],
-        ROLE_ID_BY_NAME["ui-artists"],
-        ROLE_ID_BY_NAME["ugc-creators"],
-    ),
-    "help": (
-        ROLE_ID_BY_NAME["owner"],
-        ROLE_ID_BY_NAME["admin"],
-        ROLE_ID_BY_NAME["ui-artists"],
-        ROLE_ID_BY_NAME["ugc-creators"],
-    ),
-    "weekly-earnings": (
-        ROLE_ID_BY_NAME["owner"],
-        ROLE_ID_BY_NAME["admin"],
-        ROLE_ID_BY_NAME["ui-artists"],
-        ROLE_ID_BY_NAME["ugc-creators"],
-    ),
-    "leaderboard": (
-        ROLE_ID_BY_NAME["owner"],
-        ROLE_ID_BY_NAME["admin"],
-        ROLE_ID_BY_NAME["ui-artists"],
-        ROLE_ID_BY_NAME["ugc-creators"],
-    ),
-    "hourly-data": (
-        ROLE_ID_BY_NAME["owner"],
-    ),
-    "add-time": (
-        ROLE_ID_BY_NAME["owner"],
-        ROLE_ID_BY_NAME["admin"],
-        ROLE_ID_BY_NAME["ui-artists"],
-        ROLE_ID_BY_NAME["ugc-creators"],
-    ),
-    "subtract-time": (
-        ROLE_ID_BY_NAME["owner"],
-        ROLE_ID_BY_NAME["admin"],
-        ROLE_ID_BY_NAME["ui-artists"],
-        ROLE_ID_BY_NAME["ugc-creators"],
-    ),
-    "set-time": (
-        ROLE_ID_BY_NAME["owner"],
-        ROLE_ID_BY_NAME["admin"],
-        ROLE_ID_BY_NAME["ui-artists"],
-        ROLE_ID_BY_NAME["ugc-creators"],
-    ),
-    "report": (
-        ROLE_ID_BY_NAME["owner"],
-    ),
-    "payment-data": (
-        ROLE_ID_BY_NAME["owner"],
-    ),
-    "restoreday": (
-        ROLE_ID_BY_NAME["owner"],
-    ),
-    "testweeklyannouncement": (
-        ROLE_ID_BY_NAME["owner"],
-    ),
-    "setreportchannel": (
-        ROLE_ID_BY_NAME["owner"],
-     ),
-    "setclockedinrole": (
-        ROLE_ID_BY_NAME["owner"],
-    ),
-    "setnicknamehours": (
-        ROLE_ID_BY_NAME["owner"],
-    ),
-    "postpanel": (
-        ROLE_ID_BY_NAME["owner"],
-    ),
-}
 PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
     USER_ID_BY_USERNAME["alex"]: (
         (0, 3000),
@@ -192,20 +98,20 @@ PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
         (0, 1500),
     ),
 }
-USER_TIMEZONE_BY_ID: dict[int, str] = {
+USER_TIMEZONE_OFFSET_BY_ID: dict[int, str] = {
     # Owner
-    USER_ID_BY_USERNAME["me"]: "America/Chicago",
+    USER_ID_BY_USERNAME["me"]: "UTC-5",
     # Scripters
-    USER_ID_BY_USERNAME["alex"]: "Europe/London",
-    USER_ID_BY_USERNAME["wharkk"]: "Europe/Paris",
-    USER_ID_BY_USERNAME["yandere"]: "Europe/Warsaw",
+    USER_ID_BY_USERNAME["alex"]: "UTC+0",
+    USER_ID_BY_USERNAME["wharkk"]: "UTC+1",
+    USER_ID_BY_USERNAME["yandere"]: "UTC+1",
     # UI Artists
-    USER_ID_BY_USERNAME["wizoo"]: "Africa/Cairo",
-    USER_ID_BY_USERNAME["maus"]: "Asia/Manila",
+    USER_ID_BY_USERNAME["wizoo"]: "UTC+2",
+    USER_ID_BY_USERNAME["maus"]: "UTC+8",
     # UGC Creators
-    USER_ID_BY_USERNAME["BabooCN"]: "America/Los_Angeles",
+    USER_ID_BY_USERNAME["BabooCN"]: "UTC-7",
 }
-DEFAULT_USER_TIMEZONE = "UTC"
+DEFAULT_USER_TIMEZONE_OFFSET = "UTC+0"
 DEFAULT_CLOCKED_IN_ROLE_ID = 1475219245775196434
 OFFLINE_RETURN_PROMPT_TIMEOUT_SECONDS = 24 * 60 * 60
 HELP_VISIBLE_COMMANDS: tuple[tuple[str, str], ...] = (
@@ -214,6 +120,7 @@ HELP_VISIBLE_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/status", "Show whether you are clocked in and current totals."),
     ("/weekly-earnings (week_offset?)", "Show your earnings for a given week."),
     ("/leaderboard (week_offset?)", "Show weekly totals for everyone with sessions."),
+    ("/hourly-data (week_offset?)", "Show weekly per-user hourly heatmaps."),
     ("/add-time (date) (minutes)", "Add minutes to your own logged time for one recent day."),
     ("/subtract-time (date) (minutes)", "Subtract minutes from your own logged time for one recent day."),
     ("/set-time (date) (minutes)", "Set your own logged minutes for one recent day exactly."),
@@ -297,6 +204,28 @@ def _format_usd_from_cents(cents: int) -> str:
 
 def _dt_from_ts(ts: int) -> datetime:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+
+
+def _zoneinfo_name_from_utc_offset_label(offset_label: str) -> str:
+    """Map labels like UTC+1/UTC-6 to fixed-offset IANA names."""
+    label = offset_label.strip().upper()
+    if label == "UTC":
+        return "UTC"
+
+    m = re.fullmatch(r"UTC([+-])(\d{1,2})", label)
+    if not m:
+        return "UTC"
+
+    sign = m.group(1)
+    hours = int(m.group(2))
+    if hours == 0:
+        return "UTC"
+    if hours < 0 or hours > 14:
+        return "UTC"
+
+    # IANA Etc/GMT signs are inverted: Etc/GMT+6 is UTC-6.
+    etc_sign = "-" if sign == "+" else "+"
+    return f"Etc/GMT{etc_sign}{hours}"
 
 
 def _format_hours_minutes(total_seconds: int) -> str:
@@ -1094,17 +1023,7 @@ class TimeTrackingCog(commands.Cog):
             return False
         return True
 
-    def _allowed_role_ids_for_command(self, command_name: str | None) -> tuple[int, ...]:
-        if command_name:
-            return COMMAND_ALLOWED_ROLE_IDS_BY_NAME.get(command_name, ALL_WHITELISTED_ROLE_IDS)
-        return ALL_WHITELISTED_ROLE_IDS
-
-    def _member_has_required_role(
-        self,
-        interaction: discord.Interaction,
-        *,
-        command_name: str | None = None,
-    ) -> bool:
+    def _member_has_required_role(self, interaction: discord.Interaction) -> bool:
         if interaction.guild is None or interaction.user is None:
             return False
 
@@ -1116,16 +1035,11 @@ class TimeTrackingCog(commands.Cog):
         if member is None:
             return False
 
-        required_roles = set(self._allowed_role_ids_for_command(command_name))
+        required_roles = set(REQUIRED_COMMAND_ROLE_IDS)
         return any(int(role.id) in required_roles for role in member.roles)
 
-    async def _require_required_role(
-        self,
-        interaction: discord.Interaction,
-        *,
-        command_name: str | None = None,
-    ) -> bool:
-        if self._member_has_required_role(interaction, command_name=command_name):
+    async def _require_required_role(self, interaction: discord.Interaction) -> bool:
+        if self._member_has_required_role(interaction):
             return True
 
         msg = "You are not allowed to use this bot in this server."
@@ -1148,7 +1062,7 @@ class TimeTrackingCog(commands.Cog):
 
     async def _require_restore_owner(self, interaction: discord.Interaction) -> bool:
         assert interaction.user is not None
-        if int(interaction.user.id) != USER_ID_BY_USERNAME["me"]:
+        if int(interaction.user.id) != RESTORE_OWNER_USER_ID:
             await interaction.response.send_message(
                 "You are not allowed to use this command.",
                 ephemeral=True,
@@ -1171,7 +1085,8 @@ class TimeTrackingCog(commands.Cog):
             return False
 
     def _resolve_user_timezone(self, *, user_id: int) -> str:
-        tz_name = USER_TIMEZONE_BY_ID.get(int(user_id), DEFAULT_USER_TIMEZONE)
+        label = USER_TIMEZONE_OFFSET_BY_ID.get(int(user_id), DEFAULT_USER_TIMEZONE_OFFSET)
+        tz_name = _zoneinfo_name_from_utc_offset_label(label)
         if self._is_valid_timezone(tz_name):
             return tz_name
         return "UTC"
@@ -1445,7 +1360,7 @@ class TimeTrackingCog(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         if interaction.user is None:
             return []
-        if not self._member_has_required_role(interaction, command_name="add-time"):
+        if not self._member_has_required_role(interaction):
             return []
 
         now_ts = int(time.time())
@@ -1471,19 +1386,21 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name=command_name.lstrip("/")):
+        if not await self._require_required_role(interaction):
             return
 
         assert interaction.guild is not None
         assert interaction.user is not None
 
-        public_channel = await self._resolve_guild_message_channel(
-            interaction.guild,
-            PUBLIC_BOT_MESSAGES_CHANNEL_ID,
-        )
-        if public_channel is None:
+        audit_channel = interaction.guild.get_channel(TIME_ADJUSTMENT_AUDIT_CHANNEL_ID)
+        if audit_channel is None:
+            try:
+                audit_channel = await interaction.guild.fetch_channel(TIME_ADJUSTMENT_AUDIT_CHANNEL_ID)
+            except discord.HTTPException:
+                audit_channel = None
+        if not isinstance(audit_channel, (discord.TextChannel, discord.Thread)):
             await interaction.response.send_message(
-                f"I could not access the required public message channel <#{PUBLIC_BOT_MESSAGES_CHANNEL_ID}>.",
+                "Adjustment blocked: configured audit channel is missing or not a text channel/thread.",
                 ephemeral=True,
             )
             return
@@ -1491,12 +1408,12 @@ class TimeTrackingCog(commands.Cog):
         if self.bot.user is not None:
             me = interaction.guild.get_member(self.bot.user.id)
             if me is not None:
-                perms = public_channel.permissions_for(me)
+                perms = audit_channel.permissions_for(me)
                 can_send = bool(perms.send_messages)
                 can_send_thread = bool(getattr(perms, "send_messages_in_threads", True))
-                if not can_send or (isinstance(public_channel, discord.Thread) and not can_send_thread):
+                if not can_send or (isinstance(audit_channel, discord.Thread) and not can_send_thread):
                     await interaction.response.send_message(
-                        "I need permission to send messages in the configured public message channel to post the required public audit log.",
+                        "I need permission to send messages in the configured audit channel to post the required public audit log.",
                         ephemeral=True,
                     )
                     return
@@ -1590,7 +1507,7 @@ class TimeTrackingCog(commands.Cog):
         audit_embed.set_footer(text="Audit log for manual self-service correction.")
 
         try:
-            await public_channel.send(embed=audit_embed)
+            await audit_channel.send(embed=audit_embed)
         except discord.Forbidden:
             await interaction.response.send_message(
                 "Adjustment applied, but I could not post the required public audit message due to missing permissions.",
@@ -1618,7 +1535,10 @@ class TimeTrackingCog(commands.Cog):
             ),
             inline=False,
         )
-        confirm_embed.set_footer(text=f"A public audit message was posted in {public_channel.mention}.")
+        if isinstance(audit_channel, (discord.TextChannel, discord.Thread)):
+            confirm_embed.set_footer(text=f"A public audit message was posted in #{audit_channel.name}.")
+        else:
+            confirm_embed.set_footer(text="A public audit message was posted in the configured audit channel.")
         await interaction.response.send_message(embed=confirm_embed, ephemeral=True)
 
     def _format_week_progress(self, *, now_ts: int, window_start: int, window_end: int) -> tuple[str, str]:
@@ -1894,16 +1814,16 @@ class TimeTrackingCog(commands.Cog):
         )
 
         already_posted = await self.db.has_weekly_leaderboard_post(
-            channel_id=PUBLIC_BOT_MESSAGES_CHANNEL_ID,
+            channel_id=WEEKLY_ANNOUNCEMENT_CHANNEL_ID,
             week_start_ts=previous_week.start_ts,
         )
         if already_posted:
             return
 
-        channel = self.bot.get_channel(PUBLIC_BOT_MESSAGES_CHANNEL_ID)
+        channel = self.bot.get_channel(WEEKLY_ANNOUNCEMENT_CHANNEL_ID)
         if channel is None:
             try:
-                channel = await self.bot.fetch_channel(PUBLIC_BOT_MESSAGES_CHANNEL_ID)
+                channel = await self.bot.fetch_channel(WEEKLY_ANNOUNCEMENT_CHANNEL_ID)
             except discord.HTTPException:
                 print("Weekly leaderboard announcement: failed to fetch target channel.")
                 return
@@ -1933,7 +1853,7 @@ class TimeTrackingCog(commands.Cog):
             return
 
         await self.db.mark_weekly_leaderboard_post(
-            channel_id=PUBLIC_BOT_MESSAGES_CHANNEL_ID,
+            channel_id=WEEKLY_ANNOUNCEMENT_CHANNEL_ID,
             week_start_ts=previous_week.start_ts,
             posted_at_ts=now_ts,
         )
@@ -1977,14 +1897,18 @@ class TimeTrackingCog(commands.Cog):
             return None
         to_send = list(embeds) if embeds is not None else [embed]
 
-        if interaction.guild is None:
+        channel_id = settings.get("report_channel_id")
+        if not channel_id or interaction.guild is None:
             return None
 
-        channel = await self._resolve_guild_message_channel(
-            interaction.guild,
-            PUBLIC_BOT_MESSAGES_CHANNEL_ID,
-        )
+        channel = interaction.guild.get_channel(int(channel_id))
         if channel is None:
+            try:
+                channel = await interaction.guild.fetch_channel(int(channel_id))
+            except discord.HTTPException:
+                return None
+
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             return None
 
         try:
@@ -1993,15 +1917,13 @@ class TimeTrackingCog(commands.Cog):
         except discord.Forbidden:
             return None
 
-    async def _resolve_guild_message_channel(
-        self,
-        guild: discord.Guild,
-        channel_id: int,
+    async def _get_offline_return_prompt_channel(
+        self, guild: discord.Guild
     ) -> discord.TextChannel | discord.Thread | None:
-        channel = guild.get_channel(int(channel_id))
+        channel = guild.get_channel(OFFLINE_RETURN_PROMPT_CHANNEL_ID)
         if channel is None:
             try:
-                channel = await guild.fetch_channel(int(channel_id))
+                channel = await guild.fetch_channel(OFFLINE_RETURN_PROMPT_CHANNEL_ID)
             except discord.HTTPException:
                 return None
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
@@ -2016,10 +1938,7 @@ class TimeTrackingCog(commands.Cog):
         offline_started_at: int,
         now_ts: int,
     ) -> None:
-        channel = await self._resolve_guild_message_channel(
-            member.guild,
-            PUBLIC_BOT_MESSAGES_CHANNEL_ID,
-        )
+        channel = await self._get_offline_return_prompt_channel(member.guild)
         if channel is None:
             return
 
@@ -2193,10 +2112,7 @@ class TimeTrackingCog(commands.Cog):
         except (TypeError, ValueError):
             return
 
-        channel = await self._resolve_guild_message_channel(
-            guild,
-            PUBLIC_BOT_MESSAGES_CHANNEL_ID,
-        )
+        channel = await self._get_offline_return_prompt_channel(guild)
         if channel is None:
             return
 
@@ -2442,7 +2358,7 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="start"):
+        if not await self._require_required_role(interaction):
             return
 
         assert interaction.guild is not None
@@ -2551,7 +2467,7 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="stop"):
+        if not await self._require_required_role(interaction):
             return
 
         assert interaction.guild is not None
@@ -2683,7 +2599,7 @@ class TimeTrackingCog(commands.Cog):
     async def _handle_status(self, interaction: discord.Interaction, *, update_invoking_message: bool = False) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="status"):
+        if not await self._require_required_role(interaction):
             return
 
         assert interaction.guild is not None
@@ -2780,7 +2696,7 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="leaderboard"):
+        if not await self._require_required_role(interaction):
             return
 
         assert interaction.guild is not None
@@ -2832,7 +2748,7 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="hourly-data"):
+        if not await self._require_required_role(interaction):
             return
 
         assert interaction.guild is not None
@@ -2877,7 +2793,7 @@ class TimeTrackingCog(commands.Cog):
     async def _handle_help(self, interaction: discord.Interaction) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="help"):
+        if not await self._require_required_role(interaction):
             return
 
         embed = discord.Embed(
@@ -2895,7 +2811,7 @@ class TimeTrackingCog(commands.Cog):
     async def _handle_payment(self, interaction: discord.Interaction, *, week_offset: int = 0) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="weekly-earnings"):
+        if not await self._require_required_role(interaction):
             return
 
         assert interaction.guild is not None
@@ -2975,7 +2891,7 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="report"):
+        if not await self._require_required_role(interaction):
             return
         if not await self._require_restore_owner(interaction):
             return
@@ -3117,7 +3033,7 @@ class TimeTrackingCog(commands.Cog):
     async def payment_data(self, interaction: discord.Interaction) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="payment-data"):
+        if not await self._require_required_role(interaction):
             return
         if not await self._require_restore_owner(interaction):
             return
@@ -3242,7 +3158,7 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="restoreday"):
+        if not await self._require_required_role(interaction):
             return
         if not await self._require_restore_owner(interaction):
             return
@@ -3336,19 +3252,16 @@ class TimeTrackingCog(commands.Cog):
     async def testweeklyannouncement(self, interaction: discord.Interaction) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="testweeklyannouncement"):
+        if not await self._require_required_role(interaction):
             return
         if not await self._require_restore_owner(interaction):
             return
 
         assert interaction.guild is not None
-        channel = await self._resolve_guild_message_channel(
-            interaction.guild,
-            PUBLIC_BOT_MESSAGES_CHANNEL_ID,
-        )
-        if channel is None:
+        channel = interaction.channel
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
             await interaction.response.send_message(
-                f"I could not access the target message channel <#{PUBLIC_BOT_MESSAGES_CHANNEL_ID}>.",
+                "This command must be run in a text channel or thread.",
                 ephemeral=True,
             )
             return
@@ -3399,7 +3312,7 @@ class TimeTrackingCog(commands.Cog):
     ) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="setreportchannel"):
+        if not await self._require_required_role(interaction):
             return
         if not await self._require_restore_owner(interaction):
             return
@@ -3422,7 +3335,7 @@ class TimeTrackingCog(commands.Cog):
     async def setclockedinrole(self, interaction: discord.Interaction, role: discord.Role | None = None) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="setclockedinrole"):
+        if not await self._require_required_role(interaction):
             return
         if not await self._require_restore_owner(interaction):
             return
@@ -3443,7 +3356,7 @@ class TimeTrackingCog(commands.Cog):
     async def setnicknamehours(self, interaction: discord.Interaction, enabled: bool) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="setnicknamehours"):
+        if not await self._require_required_role(interaction):
             return
         if not await self._require_restore_owner(interaction):
             return
@@ -3460,22 +3373,16 @@ class TimeTrackingCog(commands.Cog):
     async def postpanel(self, interaction: discord.Interaction) -> None:
         if not await self._require_guild(interaction):
             return
-        if not await self._require_required_role(interaction, command_name="postpanel"):
+        if not await self._require_required_role(interaction):
             return
         if not await self._require_restore_owner(interaction):
             return
 
         assert interaction.guild is not None
 
-        panel_channel = await self._resolve_guild_message_channel(
-            interaction.guild,
-            PANEL_CHANNEL_ID,
-        )
-        if panel_channel is None:
-            await interaction.response.send_message(
-                f"I could not access the panel channel <#{PANEL_CHANNEL_ID}>.",
-                ephemeral=True,
-            )
+        channel = interaction.channel
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            await interaction.response.send_message("This command must be run in a text channel.", ephemeral=True)
             return
 
         if not await _defer_ephemeral_thinking(interaction, context="postpanel"):
@@ -3489,7 +3396,7 @@ class TimeTrackingCog(commands.Cog):
         )
         embed.set_footer(text="Buttons are persistent (they keep working after bot restarts).")
 
-        panel_message = await panel_channel.send(embed=embed, view=self.make_panel_view())
+        panel_message = await channel.send(embed=embed, view=self.make_panel_view())
         await self._get_settings(interaction.guild.id)
         await self.db.set_panel_message(
             guild_id=interaction.guild.id,
@@ -3497,8 +3404,5 @@ class TimeTrackingCog(commands.Cog):
             message_id=panel_message.id,
         )
 
-        await interaction.followup.send(
-            f"Posted the time tracker panel in {panel_channel.mention}.",
-            ephemeral=True,
-        )
+        await interaction.followup.send(f"Posted the time tracker panel in {channel.mention}.", ephemeral=True)
 

@@ -12,28 +12,18 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/add-time date minutes` add minutes to your own logged day total (last 7 invoker-local days only) with required public audit message
 - `/subtract-time date minutes` subtract minutes from your own logged day total (last 7 invoker-local days only) with required public audit message
 - `/set-time date minutes` set your own logged day total exactly (last 7 invoker-local days only) with required public audit message
-- `/weekly-earnings [week_offset]` show your own earnings for a given week (defaults to current week)
 - `/payment-data` owner-only payout breakdown for the previous week, computed per developer-local week windows with marginal pay brackets
-- `/setreportchannel [channel]` owner-only legacy setting (stored, but public report/leaderboard/hourly posts are currently routed to channel `1468690277563764812`)
-- `/postpanel` owner-only command that posts the persistent button panel (Start/Stop/Status/Leaderboard/?) in channel `1475250429926572112`
+- `/setreportchannel [channel]` (Manage Server/Admin) set the channel to post reports/leaderboards
+- `/postpanel` (Manage Server/Admin) post a persistent button panel (Start/Stop/Status) in the current channel
 - `/restoreday user week_offset weekday seconds` owner-only data restore tool (user id `761895875361505281`)
-- Offline-return reminder flow for active sessions: when a clocked-in user goes offline then returns, the bot prompts them in channel `1468690277563764812` to either keep the session running or trim it back to the detected offline timestamp
+- Offline-return reminder flow for active sessions: when a clocked-in user goes offline then returns, the bot prompts them in channel `1475250429926572112` to either keep the session running or trim it back to the detected offline timestamp
 - Automatic weekly leaderboard announcement (public post with `@everyone`)
-- `/testweeklyannouncement` developer-only command to post immediate announcement preview in channel `1468690277563764812` (no dedupe)
+- `/testweeklyannouncement` developer-only command to post immediate announcement preview in current channel (no dedupe)
 
 Weekly totals are computed from stored sessions using timezone-aware week windows. Data is kept (no destructive weekly reset); totals naturally \"reset\" when the week window changes.
-For private user-triggered outputs (`/start`, `/stop`, `/status`, `/weekly-earnings`, `/report`, `/leaderboard`, `/hourly-data`, `/add-time`, `/subtract-time`, `/set-time`), time windows are localized to the invoking user's configured IANA timezone mapping (fallback `UTC`).
+For private user-triggered outputs (`/start`, `/stop`, `/status`, `/report`, `/leaderboard`, `/hourly-data`, `/add-time`, `/subtract-time`, `/set-time`), time windows are localized to the invoking user's configured offset mapping (fallback `UTC+0`).
 
 `/start`, `/stop`, and `/status` also show **current-week earnings**. Earnings are computed from per-user payment brackets; if a user has no explicit brackets configured in `PAYMENT_BRACKETS_RATE_CENTS_BY_USER`, earnings display as `$0.00`.
-
-## Command access control
-Runtime permissions and slash-command visibility are driven by per-command role mappings.
-
-- Whitelisted-role commands (owner/admin/ui-artists/ugc-creators):  
-  `/start`, `/stop`, `/status`, `/help`, `/weekly-earnings`, `/leaderboard`, `/hourly-data`, `/add-time`, `/subtract-time`, `/set-time`
-- Owner-role commands:  
-  `/report`, `/payment-data`, `/restoreday`, `/testweeklyannouncement`, `/setreportchannel`, `/setclockedinrole`, `/setnicknamehours`, `/postpanel`
-- Owner-role commands also enforce runtime owner user-id check (`761895875361505281`).
 
 ## Discord app setup (one-time)
 1. Go to https://discord.com/developers/applications and create an application.
@@ -90,7 +80,7 @@ Each weekday is **three lines** (invoker-local time): **bold** day name, then **
 ## Manual restore command (owner-only)
 Use `/restoreday` to restore historical time after data-loss incidents.
 
-- Allowed caller: owner-only command (runtime user-id check remains `761895875361505281`)
+- Allowed caller: only Discord user id `761895875361505281`
 - Inputs: target `user`, `week_offset`, `weekday`, and exact `seconds`
 - Behavior: replaces that local day total exactly for the target user
   - It removes overlapping portions from existing closed sessions for that day
@@ -114,29 +104,25 @@ Use `/add-time`, `/subtract-time`, or `/set-time` to correct your own day totals
   - command validates day-length limits (DST-safe local day windows)
   - command fails if there is an overlapping active session (same protection as restore)
 - Audit requirement:
-  - each successful use posts a **public audit embed** in channel `1468690277563764812`
+  - each successful use posts a **public audit embed** in the same channel
   - audit includes user, command, date/timezone, before, after, and signed delta
 
 ## Offline-return session prompt
 When a user has an active session and their Discord status changes to offline, the bot stores that detection timestamp but does not auto-stop immediately.
 
-- On return to any non-offline status, the bot posts a prompt in channel `1468690277563764812` mentioning the user.
+- On return to any non-offline status, the bot posts a prompt in channel `1475250429926572112` mentioning the user.
 - Prompt options:
   - **Continue session**: keeps the active session unchanged.
   - **Trim to offline timestamp**: closes the current session at the originally detected offline timestamp.
 - The prompt is only actionable by the mentioned user.
 - If the session is already stopped by the time they return, the offline marker is resolved automatically.
 
-## Payment commands
-### `/weekly-earnings`
-- Visibility/runtime: available to whitelisted roles.
-- Scope: computes the invoking user's earnings for `week_offset` (default current week).
-- Uses per-user marginal brackets from `PAYMENT_BRACKETS_RATE_CENTS_BY_USER`.
-
-### `/payment-data`
-- Visibility/runtime: owner-role mapped command plus runtime owner user-id check (`761895875361505281`).
+## Payment command (`/payment-data`)
+- Visibility: restricted with `Manage Server` default permission and runtime owner check.
+- Allowed caller: only Discord user id `761895875361505281`.
 - Scope: computes **previous week** (`week_offset=-1`) per developer based on each developer's own mapped timezone week window.
-- Included developers are defined in `PAYMENT_DEVELOPER_USER_IDS`.
+- Included developers: `1014149760204156938`, `629991962522681365`, `434418013916233755`.
+- Excluded from output: `761895875361505281` (owner).
 - Output shows each developer's display name and mention (`@user`) with ID for clarity.
 - Rates are configured per user in `bot/cogs/time_tracking.py` via `PAYMENT_BRACKETS_RATE_CENTS_BY_USER`.
   - Default marginal tiers currently set to:
@@ -151,25 +137,22 @@ When a user has an active session and their Discord status changes to offline, t
 The bot automatically posts a weekly leaderboard announcement:
 
 - Schedule: at fixed `UTC-6` week rollover (Monday 12:00 AM) for Monday→Sunday weeks
-- Channel: `1468690277563764812`
+- Channel: `1469817014448029807`
 - Mention: pings `@everyone`
 - Content: same leaderboard format/content as `/leaderboard`
 - Visibility: posted publicly in the channel (not ephemeral)
 
 Per-user command timezone mapping currently used for private user-triggered output:
-- `761895875361505281 -> America/Chicago`
-- `1014149760204156938 -> Europe/London`
-- `629991962522681365 -> Europe/Paris`
-- `434418013916233755 -> Europe/Warsaw`
-- `660195981404536832 -> Africa/Cairo`
-- `656182155311054858 -> Asia/Manila`
-- `753035328377454612 -> America/Los_Angeles`
-- Any unmapped user defaults to `UTC`
+- `1014149760204156938 -> UTC+0`
+- `629991962522681365 -> UTC+1`
+- `434418013916233755 -> UTC+1`
+- `761895875361505281 -> UTC-6`
+- Any unmapped user defaults to `UTC+0`
 
 The bot stores weekly post markers in the database to avoid duplicate announcements for the same week after restarts.
 
 For testing, use `/testweeklyannouncement` (developer-only for user id `761895875361505281`):
-- Posts immediately in channel `1468690277563764812`
+- Posts immediately in the channel where you run it
 - Pings `@everyone`
 - Uses the same leaderboard embed format as announcements
 - Uses current-week preview and does not write dedupe markers (safe to run repeatedly)
@@ -249,6 +232,5 @@ WantedBy=multi-user.target
 - `/start`, wait 1–2 minutes, `/stop` and confirm session duration is correct.
 - `/start` twice and confirm the second call refuses.
 - Start a session, restart the bot process, then `/stop` and confirm it still closes the active session.
-- Run `/postpanel` from any channel and confirm the panel is posted in `1475250429926572112`.
-- Run `/report` or `/leaderboard` and confirm public posts route to `1468690277563764812`.
+- Set report channel with `/setreportchannel` and run `/report` and `/leaderboard` from another channel; confirm it posts to the configured channel.
 
