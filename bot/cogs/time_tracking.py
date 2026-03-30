@@ -67,7 +67,7 @@ COMMAND_ACCESS_BY_NAME: dict[str, frozenset[str]] = {
     "subtract-time": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
     "set-time": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
     "leaderboard": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "hourly-data": frozenset({"owner"}),
+    "hourly-data": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
     "report": frozenset({"owner"}),
     "payment-data": frozenset({"owner"}),
     "restoreday": frozenset({"owner"}),
@@ -1017,26 +1017,39 @@ class TimeTrackingCog(commands.Cog):
     def _role_ids_for_allowed_names(self, allowed_role_names: frozenset[str]) -> set[int]:
         return {int(ROLE_ID_BY_NAME[n]) for n in allowed_role_names}
 
-    def _member_has_command_access(self, interaction: discord.Interaction, *, command_name: str) -> bool:
-        allowed_role_names = COMMAND_ACCESS_BY_NAME[command_name]
+    async def _resolve_interaction_member(self, interaction: discord.Interaction) -> discord.Member | None:
         if interaction.guild is None or interaction.user is None:
-            return False
+            return None
+        user = interaction.user
+        if isinstance(user, discord.Member) and user.guild.id == interaction.guild.id:
+            return user
+        cached = interaction.guild.get_member(user.id)
+        if cached is not None:
+            return cached
+        try:
+            return await interaction.guild.fetch_member(user.id)
+        except discord.HTTPException:
+            return None
 
-        member: discord.Member | None
-        if isinstance(interaction.user, discord.Member):
-            member = interaction.user
-        else:
-            member = interaction.guild.get_member(interaction.user.id)
-        if member is None:
-            return False
-
+    def _member_has_roles_for_command(
+        self,
+        member: discord.Member,
+        guild: discord.Guild,
+        command_name: str,
+    ) -> bool:
+        allowed_role_names = COMMAND_ACCESS_BY_NAME[command_name]
         allowed_ids = self._role_ids_for_allowed_names(allowed_role_names)
-        if not any(int(role.id) in allowed_ids for role in member.roles):
-            return False
-        return True
+        if any(int(role.id) in allowed_ids for role in member.roles):
+            return True
+        # Server owner can run commands gated on the configured "owner" role without assigning it.
+        if "owner" in allowed_role_names and int(member.id) == int(guild.owner_id):
+            return True
+        return False
 
     async def _require_command_access(self, interaction: discord.Interaction, *, command_name: str) -> bool:
-        if not self._member_has_command_access(interaction, command_name=command_name):
+        assert interaction.guild is not None
+        member = await self._resolve_interaction_member(interaction)
+        if member is None or not self._member_has_roles_for_command(member, interaction.guild, command_name):
             msg = "You are not allowed to use this bot in this server."
             if interaction.response.is_done():
                 await interaction.followup.send(msg, ephemeral=True)
@@ -1348,10 +1361,13 @@ class TimeTrackingCog(commands.Cog):
         interaction: discord.Interaction,
         current: str,
     ) -> list[app_commands.Choice[str]]:
-        if interaction.user is None:
+        if interaction.user is None or interaction.guild is None:
             return []
         cmd = interaction.command
-        if cmd is None or not self._member_has_command_access(interaction, command_name=cmd.name):
+        if cmd is None:
+            return []
+        member = await self._resolve_interaction_member(interaction)
+        if member is None or not self._member_has_roles_for_command(member, interaction.guild, cmd.name):
             return []
 
         now_ts = int(time.time())
