@@ -75,8 +75,8 @@ Which weekday opens the week (`0=Monday … 6=Sunday`) comes from guild settings
 **Env `DEFAULT_TIMEZONE`**  
 On first use of a guild, `DEFAULT_TIMEZONE` is stored in `guild_settings.timezone` in the database. The cog does **not** read that column for the slash-command flows above (those use `USER_TIMEZONE_BY_ID`). It remains for consistency and possible future use.
 
-**Automatic weekly `@everyone` announcement (different clock)**  
-The scheduled public leaderboard post does **not** use `USER_TIMEZONE_BY_ID` or `DEFAULT_TIMEZONE`. It uses hard-coded `WEEKLY_ANNOUNCEMENT_TIMEZONE` and `WEEKLY_ANNOUNCEMENT_WEEK_START` in `bot/cogs/time_tracking.py`—see [Automatic weekly leaderboard announcement](#automatic-weekly-leaderboard-announcement).
+**Automatic weekly `@everyone` announcement (wait-for-all rule)**  
+The scheduled public leaderboard post waits until the local week has rolled over for **all users defined in `USER_TIMEZONE_BY_ID`**. It then posts once for that cycle using per-user local week boundaries—see [Automatic weekly leaderboard announcement](#automatic-weekly-leaderboard-announcement).
 
 On Windows, the `tzdata` dependency is included so IANA timezones resolve consistently.
 
@@ -146,13 +146,14 @@ When a user has an active session and their Discord status changes to offline, t
     - 50h+ at $50/hr
 
 ## Automatic weekly leaderboard announcement
-The bot automatically posts a weekly leaderboard announcement. Timing uses **`WEEKLY_ANNOUNCEMENT_TIMEZONE`** / **`WEEKLY_ANNOUNCEMENT_WEEK_START`** in `time_tracking.py` (currently a fixed UTC-6–style week boundary), not `USER_TIMEZONE_BY_ID` or `DEFAULT_TIMEZONE`.
+The bot automatically posts a weekly leaderboard announcement after **all mapped user timezones** have crossed into the new week (week start from `WEEKLY_ANNOUNCEMENT_WEEK_START`).
 
-- Schedule: at fixed `UTC-6` week rollover (Monday 12:00 AM) for Monday→Sunday weeks
+- Schedule: one post per cycle, after the final mapped timezone rolls over into the next week
 - Channel: `1469817014448029807`
 - Mention: pings `@everyone`
-- Content: same leaderboard format/content as `/leaderboard`
+- Content: leaderboard rows are computed per-user in that user's own local week window (not invoker-local)
 - Visibility: posted publicly in the channel (not ephemeral)
+- Inclusion rule: only users listed in `USER_TIMEZONE_BY_ID` are included
 
 Per-user IANA timezone mapping (`USER_TIMEZONE_BY_ID`) for command-localized windows:
 - `1014149760204156938` (alex) → `Europe/London`

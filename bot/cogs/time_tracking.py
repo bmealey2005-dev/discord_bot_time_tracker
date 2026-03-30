@@ -43,8 +43,6 @@ WEEKDAY_MON_INDEX = {
     "saturday": 5,
     "sunday": 6,
 }
-# Fixed UTC-6 (year-round, no DST) for shared public weekly announcements.
-WEEKLY_ANNOUNCEMENT_TIMEZONE = "Etc/GMT+6"
 WEEKLY_ANNOUNCEMENT_WEEK_START = 0  # Monday
 WEEKLY_ANNOUNCEMENT_GRACE_SECONDS = 15 * 60
 ROLE_ID_BY_NAME: dict[str, int] = {
@@ -639,6 +637,13 @@ class LeaderboardUserBreakdown:
     user_id: int
     week_total_seconds: int
     day_totals_seconds: list[int]  # length 7, aligned to week window start
+
+
+@dataclass(frozen=True)
+class AnnouncementCycleState:
+    all_users_rolled: bool
+    rollover_anchor_ts: int
+    next_check_ts: int
 
 
 class ClockedInActionsView(discord.ui.View):
@@ -1811,18 +1816,139 @@ class TimeTrackingCog(commands.Cog):
         )
         return embeds
 
-    async def _maybe_send_weekly_announcement(self) -> None:
-        now_ts = int(time.time())
-        previous_week = compute_week_window(
-            now=_dt_from_ts(now_ts),
-            tz_name=WEEKLY_ANNOUNCEMENT_TIMEZONE,
-            week_start=WEEKLY_ANNOUNCEMENT_WEEK_START,
-            week_offset=-1,
+    def _announcement_user_ids(self) -> list[int]:
+        return sorted(int(uid) for uid in USER_TIMEZONE_BY_ID.keys())
+
+    def _compute_announcement_cycle_state(self, *, now_ts: int) -> AnnouncementCycleState | None:
+        user_ids = self._announcement_user_ids()
+        if not user_ids:
+            return None
+
+        start_timestamps: list[int] = []
+        end_timestamps: list[int] = []
+        for user_id in user_ids:
+            tz_name = self._resolve_user_timezone(user_id=int(user_id))
+            current_week = compute_week_window(
+                now=_dt_from_ts(now_ts),
+                tz_name=tz_name,
+                week_start=WEEKLY_ANNOUNCEMENT_WEEK_START,
+                week_offset=0,
+            )
+            start_timestamps.append(int(current_week.start_ts))
+            end_timestamps.append(int(current_week.end_ts))
+
+        latest_start = max(start_timestamps)
+        earliest_start = min(start_timestamps)
+        latest_end = max(end_timestamps)
+        earliest_end = min(end_timestamps)
+
+        # If users are in the same local-week cycle, start timestamps stay close (timezone spread).
+        # During rollover transitions they split by ~1 week. Use this to detect "everyone rolled".
+        all_users_rolled = (latest_start - earliest_start) <= (3 * 24 * 60 * 60)
+        next_check_ts = latest_end if all_users_rolled else earliest_end
+        return AnnouncementCycleState(
+            all_users_rolled=bool(all_users_rolled),
+            rollover_anchor_ts=int(latest_start),
+            next_check_ts=int(next_check_ts),
         )
 
+    async def _build_weekly_announcement_embed_per_user_local(
+        self,
+        *,
+        guild_id: int,
+        now_ts: int,
+        week_offset: int,
+    ) -> discord.Embed:
+        day_labels = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        ws = int(WEEKLY_ANNOUNCEMENT_WEEK_START)
+        day_labels = day_labels[ws:] + day_labels[:ws]
+
+        breakdowns: list[tuple[LeaderboardUserBreakdown, str, int, int]] = []
+        for user_id in self._announcement_user_ids():
+            tz_name = self._resolve_user_timezone(user_id=int(user_id))
+            window = compute_week_window(
+                now=_dt_from_ts(now_ts),
+                tz_name=tz_name,
+                week_start=WEEKLY_ANNOUNCEMENT_WEEK_START,
+                week_offset=int(week_offset),
+            )
+            rows = await self.db.list_sessions_overlapping_window(
+                guild_id=int(guild_id),
+                user_id=int(user_id),
+                window_start=window.start_ts,
+                window_end=window.end_ts,
+            )
+            day_windows = self._compute_day_windows_for_week(
+                week_start_ts=window.start_ts,
+                tz_name=tz_name,
+            )
+
+            day_totals = [0] * 7
+            for r in rows:
+                s = int(r["started_at"])
+                e = int(r["ended_at"]) if r["ended_at"] is not None else int(now_ts)
+                for di, (ds, de) in enumerate(day_windows):
+                    day_totals[di] += overlap_seconds(s, e, ds, de)
+
+            week_total = int(sum(day_totals))
+            if week_total <= 0:
+                continue
+            breakdowns.append(
+                (
+                    LeaderboardUserBreakdown(
+                        user_id=int(user_id),
+                        week_total_seconds=week_total,
+                        day_totals_seconds=day_totals,
+                    ),
+                    tz_name,
+                    int(window.start_ts),
+                    int(window.end_ts),
+                )
+            )
+
+        breakdowns.sort(key=lambda t: t[0].week_total_seconds, reverse=True)
+
+        blocks: list[str] = []
+        for i, (b, tz_name, start_ts, end_ts) in enumerate(breakdowns[:25], start=1):
+            header = (
+                f"{i}. <@{b.user_id}> — {_format_duration(b.week_total_seconds)}\n"
+                f"    - Timezone: `{tz_name}`\n"
+                f"    - Week window: <t:{start_ts}:D> → <t:{end_ts - 1}:D>"
+            )
+            day_lines = [
+                (
+                    f"    - {day_labels[di]}: {_format_hourglasses(b.day_totals_seconds[di])} "
+                    f"{_format_hours_minutes(b.day_totals_seconds[di])}"
+                ).replace(":  ", ": ")
+                for di in range(7)
+            ]
+            blocks.append("\n".join([header, *day_lines]))
+
+        joined = ""
+        kept = 0
+        for block in blocks:
+            candidate = (joined + ("\n\n" if joined else "") + block)
+            if len(candidate) > 3800:
+                break
+            joined = candidate
+            kept += 1
+        if kept < len(blocks):
+            joined += f"\n\n… and {len(blocks) - kept} more"
+
+        week_scope = "Current local week per user" if int(week_offset) == 0 else "Previous local week per user"
+        embed = discord.Embed(title="Weekly hours leaderboard", color=discord.Color.purple())
+        embed.add_field(name="Week scope", value=week_scope, inline=False)
+        embed.add_field(name="Week start", value="Monday", inline=True)
+        embed.add_field(name="Included users", value=str(len(self._announcement_user_ids())), inline=True)
+        embed.description = joined if joined else "No sessions found for this local-week cycle."
+        embed.set_footer(text="Daily bullets and totals are computed per user's local week boundaries.")
+        return embed
+
+    async def _maybe_send_weekly_announcement(self, *, cycle_anchor_ts: int) -> None:
+        now_ts = int(time.time())
         already_posted = await self.db.has_weekly_leaderboard_post(
             channel_id=CHANNEL_ID_BY_NAME["announcements"],
-            week_start_ts=previous_week.start_ts,
+            week_start_ts=int(cycle_anchor_ts),
         )
         if already_posted:
             return
@@ -1839,11 +1965,9 @@ class TimeTrackingCog(commands.Cog):
             print("Weekly leaderboard announcement: target channel is not a text channel/thread.")
             return
 
-        embed = await self._build_leaderboard_embed(
+        embed = await self._build_weekly_announcement_embed_per_user_local(
             guild_id=channel.guild.id,
             now_ts=now_ts,
-            tz_name=WEEKLY_ANNOUNCEMENT_TIMEZONE,
-            week_start=WEEKLY_ANNOUNCEMENT_WEEK_START,
             week_offset=-1,
         )
         try:
@@ -1861,7 +1985,7 @@ class TimeTrackingCog(commands.Cog):
 
         await self.db.mark_weekly_leaderboard_post(
             channel_id=CHANNEL_ID_BY_NAME["announcements"],
-            week_start_ts=previous_week.start_ts,
+            week_start_ts=int(cycle_anchor_ts),
             posted_at_ts=now_ts,
         )
 
@@ -1870,19 +1994,21 @@ class TimeTrackingCog(commands.Cog):
         while not self.bot.is_closed():
             try:
                 now_ts = int(time.time())
-                current_week = compute_week_window(
-                    now=_dt_from_ts(now_ts),
-                    tz_name=WEEKLY_ANNOUNCEMENT_TIMEZONE,
-                    week_start=WEEKLY_ANNOUNCEMENT_WEEK_START,
-                    week_offset=0,
-                )
+                cycle_state = self._compute_announcement_cycle_state(now_ts=now_ts)
+                if cycle_state is None:
+                    await asyncio.sleep(60)
+                    continue
 
-                # If we started shortly after week rollover, do a catch-up post once.
-                if (now_ts - int(current_week.start_ts)) <= WEEKLY_ANNOUNCEMENT_GRACE_SECONDS:
-                    await self._maybe_send_weekly_announcement()
+                if (
+                    cycle_state.all_users_rolled
+                    and (now_ts - int(cycle_state.rollover_anchor_ts)) <= WEEKLY_ANNOUNCEMENT_GRACE_SECONDS
+                    and (now_ts - int(cycle_state.rollover_anchor_ts)) >= 0
+                ):
+                    await self._maybe_send_weekly_announcement(
+                        cycle_anchor_ts=int(cycle_state.rollover_anchor_ts),
+                    )
 
-                # Sleep until the end of the current announcement week.
-                sleep_for = max(1, int(current_week.end_ts) - int(now_ts))
+                sleep_for = max(1, int(cycle_state.next_check_ts) - int(now_ts))
                 await asyncio.sleep(sleep_for)
             except asyncio.CancelledError:
                 raise
@@ -3272,11 +3398,9 @@ class TimeTrackingCog(commands.Cog):
             return
 
         now_ts = int(time.time())
-        embed = await self._build_leaderboard_embed(
+        embed = await self._build_weekly_announcement_embed_per_user_local(
             guild_id=interaction.guild.id,
             now_ts=now_ts,
-            tz_name=WEEKLY_ANNOUNCEMENT_TIMEZONE,
-            week_start=WEEKLY_ANNOUNCEMENT_WEEK_START,
             week_offset=0,  # Current-week preview for easier testing.
         )
 
