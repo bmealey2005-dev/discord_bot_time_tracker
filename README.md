@@ -15,13 +15,13 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/payment-data` owner-only payout breakdown for the previous week, computed per developer-local week windows with marginal pay brackets
 - `/setreportchannel [channel]` (Manage Server/Admin) set the channel to post reports/leaderboards
 - `/postpanel` (Manage Server/Admin) post a persistent button panel (Start/Stop/Status) in the current channel
-- `/restoreday user week_offset weekday seconds` owner-only data restore tool (user id `761895875361505281`)
+- `/restoreday user week_offset weekday seconds` owner-role-only data restore tool
 - Offline-return reminder flow for active sessions: when a clocked-in user goes offline then returns, the bot prompts them in channel `1475250429926572112` to either keep the session running or trim it back to the detected offline timestamp
 - Automatic weekly leaderboard announcement (public post with `@everyone`)
 - `/testweeklyannouncement` developer-only command to post immediate announcement preview in current channel (no dedupe)
 
 Weekly totals are computed from stored sessions using timezone-aware week windows. Data is kept (no destructive weekly reset); totals naturally \"reset\" when the week window changes.
-For private user-triggered outputs (`/start`, `/stop`, `/status`, `/report`, `/leaderboard`, `/hourly-data`, `/add-time`, `/subtract-time`, `/set-time`), time windows are localized to the invoking user's configured offset mapping (fallback `UTC+0`).
+For private user-triggered outputs (`/start`, `/stop`, `/status`, `/report`, `/leaderboard`, `/hourly-data`, `/add-time`, `/subtract-time`, `/set-time`), time windows use the invoking user's configured **IANA** timezone from `USER_TIMEZONE_BY_ID` in `time_tracking.py` (fallback `UTC`).
 
 `/start`, `/stop`, and `/status` also show **current-week earnings**. Earnings are computed from per-user payment brackets; if a user has no explicit brackets configured in `PAYMENT_BRACKETS_RATE_CENTS_BY_USER`, earnings display as `$0.00`.
 
@@ -56,18 +56,31 @@ Tip: set `DEV_GUILD_ID` in `.env` while developing so slash commands sync instan
 ## Configuration
 Environment variables (see `.env.example`):
 - `DISCORD_TOKEN` (required)
-- `DEFAULT_TIMEZONE` (default: `America/Chicago`)
+- `DEFAULT_TIMEZONE` (default: `UTC`; see [Weekly totals](#weekly-totals-resets-weekly))
 - `DEFAULT_WEEK_START` (default: `0` which is Monday)
 - `DEV_GUILD_ID` (optional; speeds up slash command registration)
 - `DATABASE_URL` (optional; preferred in production, e.g. Railway Postgres)
 - `DB_PATH` (default: `./data/time_tracker.sqlite3`)
 
-## Weekly totals ("resets weekly") 
-The bot stores raw sessions (start/end timestamps) and computes totals based on a week window:
-- `DEFAULT_TIMEZONE` uses an IANA name like `UTC` or `America/Los_Angeles`
-- `DEFAULT_WEEK_START`: `0=Mon .. 6=Sun`
+## Weekly totals ("resets weekly")
 
-On Windows, the `tzdata` dependency is included so IANA timezones work consistently.
+The bot stores raw sessions as UTC timestamps and derives **local days** and **week windows** with Python’s `zoneinfo.ZoneInfo` (IANA timezone database).
+
+**Per-user local time (`USER_TIMEZONE_BY_ID` + `_resolve_user_timezone`)**  
+For most behavior—`/start` / `/stop` / `/status`, `/leaderboard`, `/hourly-data`, `/weekly-earnings`, self-serve time edits, owner `/restoreday`, `/payment-data` rows, etc.—the bot picks an IANA name from `USER_TIMEZONE_BY_ID` for that Discord user id, validates it, and runs all “their” week/day math in that zone (including DST). If someone is not in the map, the cog falls back to `DEFAULT_USER_TIMEZONE` (`UTC` in code). Values can still use legacy `UTC±N` labels; those resolve to fixed-offset zones, not civil time with DST.
+
+**Guild week start (`DEFAULT_WEEK_START`)**  
+Which weekday opens the week (`0=Monday … 6=Sunday`) comes from guild settings, initially seeded from env `DEFAULT_WEEK_START`. That single setting applies to the whole server for week alignment; it is **not** per-user.
+
+**Env `DEFAULT_TIMEZONE`**  
+On first use of a guild, `DEFAULT_TIMEZONE` is stored in `guild_settings.timezone` in the database. The cog does **not** read that column for the slash-command flows above (those use `USER_TIMEZONE_BY_ID`). It remains for consistency and possible future use.
+
+**Automatic weekly `@everyone` announcement (different clock)**  
+The scheduled public leaderboard post does **not** use `USER_TIMEZONE_BY_ID` or `DEFAULT_TIMEZONE`. It uses hard-coded `WEEKLY_ANNOUNCEMENT_TIMEZONE` and `WEEKLY_ANNOUNCEMENT_WEEK_START` in `bot/cogs/time_tracking.py`—see [Automatic weekly leaderboard announcement](#automatic-weekly-leaderboard-announcement).
+
+On Windows, the `tzdata` dependency is included so IANA timezones resolve consistently.
+
+Current `USER_TIMEZONE_BY_ID` entries are listed with the [automatic weekly announcement](#automatic-weekly-leaderboard-announcement) section below.
 
 ## Hourly activity heatmap (`/hourly-data`)
 Each weekday is **three lines** (invoker-local time): **bold** day name, then **12 emoji (0–11)** immediately below, then **12 emoji (12–23)**. A **blank line** separates one day’s PM row from the next day’s name. No Markdown list markers so Discord doesn’t reflow onto one line.
@@ -80,7 +93,7 @@ Each weekday is **three lines** (invoker-local time): **bold** day name, then **
 ## Manual restore command (owner-only)
 Use `/restoreday` to restore historical time after data-loss incidents.
 
-- Allowed caller: only Discord user id `761895875361505281`
+- Allowed caller: members with the configured **owner** role (`ROLE_ID_BY_NAME` in `time_tracking.py`)
 - Inputs: target `user`, `week_offset`, `weekday`, and exact `seconds`
 - Behavior: replaces that local day total exactly for the target user
   - It removes overlapping portions from existing closed sessions for that day
@@ -118,12 +131,11 @@ When a user has an active session and their Discord status changes to offline, t
 - If the session is already stopped by the time they return, the offline marker is resolved automatically.
 
 ## Payment command (`/payment-data`)
-- Visibility: restricted with `Manage Server` default permission and runtime owner check.
-- Allowed caller: only Discord user id `761895875361505281`.
-- Scope: computes **previous week** (`week_offset=-1`) per developer based on each developer's own mapped timezone week window.
-- Included developers: `1014149760204156938`, `629991962522681365`, `434418013916233755`.
-- Excluded from output: `761895875361505281` (owner).
-- Output shows each developer's display name and mention (`@user`) with ID for clarity.
+- Visibility: Discord default `Manage Server` hint on the command; runtime allowlist uses `COMMAND_ACCESS_BY_NAME` (owner role only).
+- Allowed caller: members with the configured **owner** role.
+- Scope: computes **previous week** (`week_offset=-1`) per listed user based on their mapped timezone week window.
+- Included users: every Discord user id that appears as a key in `PAYMENT_BRACKETS_RATE_CENTS_BY_USER` (add an entry there to include someone in this report).
+- Output shows each person's display name and mention (`@user`) with ID for clarity.
 - Rates are configured per user in `bot/cogs/time_tracking.py` via `PAYMENT_BRACKETS_RATE_CENTS_BY_USER`.
   - Default marginal tiers currently set to:
     - 0-10h at $30/hr
@@ -134,7 +146,7 @@ When a user has an active session and their Discord status changes to offline, t
     - 50h+ at $50/hr
 
 ## Automatic weekly leaderboard announcement
-The bot automatically posts a weekly leaderboard announcement:
+The bot automatically posts a weekly leaderboard announcement. Timing uses **`WEEKLY_ANNOUNCEMENT_TIMEZONE`** / **`WEEKLY_ANNOUNCEMENT_WEEK_START`** in `time_tracking.py` (currently a fixed UTC-6–style week boundary), not `USER_TIMEZONE_BY_ID` or `DEFAULT_TIMEZONE`.
 
 - Schedule: at fixed `UTC-6` week rollover (Monday 12:00 AM) for Monday→Sunday weeks
 - Channel: `1469817014448029807`
@@ -142,16 +154,19 @@ The bot automatically posts a weekly leaderboard announcement:
 - Content: same leaderboard format/content as `/leaderboard`
 - Visibility: posted publicly in the channel (not ephemeral)
 
-Per-user command timezone mapping currently used for private user-triggered output:
-- `1014149760204156938 -> UTC+0`
-- `629991962522681365 -> UTC+1`
-- `434418013916233755 -> UTC+1`
-- `761895875361505281 -> UTC-6`
-- Any unmapped user defaults to `UTC+0`
+Per-user IANA timezone mapping (`USER_TIMEZONE_BY_ID`) for command-localized windows:
+- `1014149760204156938` (alex) → `Europe/London`
+- `434418013916233755` (yandere) → `Europe/Warsaw` (Poland)
+- `629991962522681365` (wharkk) → `Europe/Paris` (France)
+- `660195981404536832` (wizoo) → `Africa/Cairo` (Egypt)
+- `656182155311054858` (maus) → `Asia/Manila` (Philippines)
+- `753035328377454612` (BabooCN) → `America/Los_Angeles`
+- `761895875361505281` (me) → `America/Chicago` (Saint Louis, Missouri)
+- Any unmapped user defaults to `UTC`
 
 The bot stores weekly post markers in the database to avoid duplicate announcements for the same week after restarts.
 
-For testing, use `/testweeklyannouncement` (developer-only for user id `761895875361505281`):
+For testing, use `/testweeklyannouncement` (owner role only):
 - Posts immediately in the channel where you run it
 - Pings `@everyone`
 - Uses the same leaderboard embed format as announcements

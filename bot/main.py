@@ -7,7 +7,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from bot.config import Config, load_config
-from bot.cogs.time_tracking import REQUIRED_COMMAND_ROLE_IDS, TimeTrackingCog
+from bot.cogs.time_tracking import COMMAND_ACCESS_BY_NAME, ROLE_ID_BY_NAME, TimeTrackingCog
 from bot.db import Database
 
 
@@ -69,30 +69,38 @@ class TimeTrackerBot(commands.Bot):
             print(f"No guild commands found for role-lock visibility sync in guild {guild_id}.")
             return
 
-        permissions: list[dict[str, int | bool]] = [
-            {
-                "id": guild_id,
-                "type": int(discord.AppCommandPermissionType.role.value),
-                "permission": False,
-            }
-        ]
-        seen_ids = {guild_id}
-        for role_id in REQUIRED_COMMAND_ROLE_IDS:
-            role_id = int(role_id)
-            if role_id in seen_ids:
-                continue
-            seen_ids.add(role_id)
-            permissions.append(
-                {
-                    "id": role_id,
-                    "type": int(discord.AppCommandPermissionType.role.value),
-                    "permission": True,
-                }
-            )
-
-        payload = {"permissions": permissions}
         updated = 0
         for command in guild_commands:
+            allowed_role_names = COMMAND_ACCESS_BY_NAME.get(command.name)
+            if allowed_role_names is None:
+                print(
+                    f"Skipping permission sync for unknown guild command '{command.name}' ({command.id}): "
+                    "not listed in COMMAND_ACCESS_BY_NAME."
+                )
+                continue
+
+            permissions: list[dict[str, int | bool]] = [
+                {
+                    "id": guild_id,
+                    "type": int(discord.AppCommandPermissionType.role.value),
+                    "permission": False,
+                }
+            ]
+            seen_ids: set[int] = {guild_id}
+            for role_name in allowed_role_names:
+                role_id = int(ROLE_ID_BY_NAME[role_name])
+                if role_id in seen_ids:
+                    continue
+                seen_ids.add(role_id)
+                permissions.append(
+                    {
+                        "id": role_id,
+                        "type": int(discord.AppCommandPermissionType.role.value),
+                        "permission": True,
+                    }
+                )
+
+            payload = {"permissions": permissions}
             try:
                 await self.http.edit_application_command_permissions(
                     application_id=self.application_id,
