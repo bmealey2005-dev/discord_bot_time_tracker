@@ -214,7 +214,6 @@ HELP_VISIBLE_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/status", "Show whether you are clocked in and current totals."),
     ("/weekly-earnings (week_offset?)", "Show your earnings for a given week."),
     ("/leaderboard (week_offset?)", "Show weekly totals for everyone with sessions."),
-    ("/hourly-data (week_offset?)", "Show weekly per-user hourly heatmaps."),
     ("/add-time (date) (minutes)", "Add minutes to your own logged time for one recent day."),
     ("/subtract-time (date) (minutes)", "Subtract minutes from your own logged time for one recent day."),
     ("/set-time (date) (minutes)", "Set your own logged minutes for one recent day exactly."),
