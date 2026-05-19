@@ -24,6 +24,7 @@ USER_ID_BY_USERNAME: dict[str, int] = {
     "wizoo": 660195981404536832,
     "maus": 656182155311054858,
     "BabooCN": 753035328377454612,
+    "calum": 347762453192376324,
     "me": 761895875361505281,
 }
 
@@ -107,6 +108,9 @@ PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
     USER_ID_BY_USERNAME["BabooCN"]: (
         (0, 1500),
     ),
+    USER_ID_BY_USERNAME["calum"]: (
+        (0, 3000),
+    ),
     USER_ID_BY_USERNAME["me"]: (
         (0, 0),
     ),
@@ -119,6 +123,7 @@ USER_TIMEZONE_BY_ID: dict[int, str] = {
     USER_ID_BY_USERNAME["yandere"]: "Europe/Warsaw",  # Poland
     USER_ID_BY_USERNAME["wizoo"]: "Africa/Cairo",  # Egypt
     USER_ID_BY_USERNAME["maus"]: "Asia/Manila",  # Philippines
+    USER_ID_BY_USERNAME["calum"]: "Europe/London",
     USER_ID_BY_USERNAME["BabooCN"]: "America/Los_Angeles",
 }
 DEFAULT_USER_TIMEZONE = "UTC"
