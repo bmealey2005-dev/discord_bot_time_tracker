@@ -87,7 +87,7 @@ DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR: tuple[tuple[int, int], ...] = (
     (10, 3300), 
     (20, 3600),
     (30, 4000),
-    (40, 4500),
+    (40, 4500), 
     (50, 5000),
 )
 PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
