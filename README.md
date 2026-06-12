@@ -21,9 +21,16 @@ Small-team Discord bot for tracking hourly work sessions with weekly totals and 
 - `/testweeklyannouncement` developer-only command to post immediate announcement preview in current channel (no dedupe)
 
 Weekly totals are computed from stored sessions using timezone-aware week windows. Data is kept (no destructive weekly reset); totals naturally \"reset\" when the week window changes.
-For private user-triggered outputs (`/start`, `/stop`, `/status`, `/report`, `/leaderboard`, `/hourly-data`, `/add-time`, `/subtract-time`, `/set-time`), time windows use the invoking user's configured **IANA** timezone from `USER_TIMEZONE_BY_ID` in `time_tracking.py` (fallback `UTC`).
+For private user-triggered outputs (`/start`, `/stop`, `/status`, `/report`, `/leaderboard`, `/hourly-data`, `/add-time`, `/subtract-time`, `/set-time`), time windows use the invoking user's configured **IANA** timezone from that guild's `user_timezone_by_id` in `bot/guild_config.py` (fallback `UTC`).
 
-`/start`, `/stop`, and `/status` also show **current-week earnings**. Earnings are computed from per-user payment brackets; if a user has no explicit brackets configured in `PAYMENT_BRACKETS_RATE_CENTS_BY_USER`, earnings display as `$0.00`.
+`/start`, `/stop`, and `/status` also show **current-week earnings**. Earnings are computed from per-user payment brackets; if a user has no explicit brackets configured in the guild's `payment_brackets_by_user` (`bot/guild_config.py`), earnings display as `$0.00`.
+
+## Multi-server support
+The bot supports multiple Discord servers via a per-guild config registry in `bot/guild_config.py`:
+- Each supported server gets one `GuildConfig` entry in `GUILD_CONFIGS` (keyed by guild id) holding its role ids, channel ids, employee timezones, pay brackets, command permissions, and clocked-in role.
+- Servers **not** in the registry are rejected: commands reply "This bot is not configured for this server.", presence events are ignored, and no announcements are posted.
+- Time-tracking data is isolated per server automatically (every DB table is keyed by guild id or channel id).
+- To onboard a new server: fill in the commented `SERVER_B_CONFIG` template in `bot/guild_config.py` (role/channel/user ids), add it to `GUILD_CONFIGS`, invite the bot with `bot` + `applications.commands` scopes, and restart. Command visibility role-locks sync automatically for every configured guild on startup.
 
 ## Discord app setup (one-time)
 1. Go to https://discord.com/developers/applications and create an application.
@@ -66,21 +73,21 @@ Environment variables (see `.env.example`):
 
 The bot stores raw sessions as UTC timestamps and derives **local days** and **week windows** with Python’s `zoneinfo.ZoneInfo` (IANA timezone database).
 
-**Per-user local time (`USER_TIMEZONE_BY_ID` + `_resolve_user_timezone`)**  
-For most behavior—`/start` / `/stop` / `/status`, `/leaderboard`, `/hourly-data`, `/weekly-earnings`, self-serve time edits, owner `/restoreday`, `/payment-data` rows, etc.—the bot picks an IANA name from `USER_TIMEZONE_BY_ID` for that Discord user id, validates it, and runs all “their” week/day math in that zone (including DST). If someone is not in the map, the cog falls back to `DEFAULT_USER_TIMEZONE` (`UTC` in code). Values can still use legacy `UTC±N` labels; those resolve to fixed-offset zones, not civil time with DST.
+**Per-user local time (guild `user_timezone_by_id` + `_resolve_user_timezone`)**  
+For most behavior—`/start` / `/stop` / `/status`, `/leaderboard`, `/hourly-data`, `/weekly-earnings`, self-serve time edits, owner `/restoreday`, `/payment-data` rows, etc.—the bot picks an IANA name from the guild's `user_timezone_by_id` (`bot/guild_config.py`) for that Discord user id, validates it, and runs all “their” week/day math in that zone (including DST). If someone is not in the map, the cog falls back to `DEFAULT_USER_TIMEZONE` (`UTC` in code). Values can still use legacy `UTC±N` labels; those resolve to fixed-offset zones, not civil time with DST.
 
 **Guild week start (`DEFAULT_WEEK_START`)**  
 Which weekday opens the week (`0=Monday … 6=Sunday`) comes from guild settings, initially seeded from env `DEFAULT_WEEK_START`. That single setting applies to the whole server for week alignment; it is **not** per-user.
 
 **Env `DEFAULT_TIMEZONE`**  
-On first use of a guild, `DEFAULT_TIMEZONE` is stored in `guild_settings.timezone` in the database. The cog does **not** read that column for the slash-command flows above (those use `USER_TIMEZONE_BY_ID`). It remains for consistency and possible future use.
+On first use of a guild, `DEFAULT_TIMEZONE` is stored in `guild_settings.timezone` in the database. The cog does **not** read that column for the slash-command flows above (those use the guild's `user_timezone_by_id`). It remains for consistency and possible future use.
 
 **Automatic weekly `@everyone` announcement (wait-for-all rule)**  
-The scheduled public leaderboard post waits until the local week has rolled over for **all users defined in `USER_TIMEZONE_BY_ID`**. It then posts once for that cycle using per-user local week boundaries—see [Automatic weekly leaderboard announcement](#automatic-weekly-leaderboard-announcement).
+For each configured guild, the scheduled public leaderboard post waits until the local week has rolled over for **all users defined in that guild's `user_timezone_by_id`**. It then posts once per guild per cycle using per-user local week boundaries—see [Automatic weekly leaderboard announcement](#automatic-weekly-leaderboard-announcement).
 
 On Windows, the `tzdata` dependency is included so IANA timezones resolve consistently.
 
-Current `USER_TIMEZONE_BY_ID` entries are listed with the [automatic weekly announcement](#automatic-weekly-leaderboard-announcement) section below.
+Current timezone entries for the original server are listed with the [automatic weekly announcement](#automatic-weekly-leaderboard-announcement) section below.
 
 ## Hourly activity heatmap (`/hourly-data`)
 Each weekday is **three lines** (invoker-local time): **bold** day name, then **12 emoji (0–11)** immediately below, then **12 emoji (12–23)**. A **blank line** separates one day’s PM row from the next day’s name. No Markdown list markers so Discord doesn’t reflow onto one line.
@@ -93,7 +100,7 @@ Each weekday is **three lines** (invoker-local time): **bold** day name, then **
 ## Manual restore command (owner-only)
 Use `/restoreday` to restore historical time after data-loss incidents.
 
-- Allowed caller: members with the configured **owner** role (`ROLE_ID_BY_NAME` in `time_tracking.py`)
+- Allowed caller: members with the configured **owner** role (the guild's `role_id_by_name` in `bot/guild_config.py`)
 - Inputs: target `user`, `week_offset`, `weekday`, and exact `seconds`
 - Behavior: replaces that local day total exactly for the target user
   - It removes overlapping portions from existing closed sessions for that day
@@ -131,12 +138,12 @@ When a user has an active session and their Discord status changes to offline, t
 - If the session is already stopped by the time they return, the offline marker is resolved automatically.
 
 ## Payment command (`/payment-data`)
-- Visibility: Discord default `Manage Server` hint on the command; runtime allowlist uses `COMMAND_ACCESS_BY_NAME` (owner role only).
+- Visibility: Discord default `Manage Server` hint on the command; runtime allowlist uses the guild's `command_access_by_name` (owner role only).
 - Allowed caller: members with the configured **owner** role.
 - Scope: computes **previous week** (`week_offset=-1`) per listed user based on their mapped timezone week window.
-- Included users: every Discord user id that appears as a key in `PAYMENT_BRACKETS_RATE_CENTS_BY_USER` (add an entry there to include someone in this report).
+- Included users: every Discord user id that appears as a key in the guild's `payment_brackets_by_user` (add an entry there to include someone in this report).
 - Output shows each person's display name and mention (`@user`) with ID for clarity.
-- Rates are configured per user in `bot/cogs/time_tracking.py` via `PAYMENT_BRACKETS_RATE_CENTS_BY_USER`.
+- Rates are configured per user per guild in `bot/guild_config.py` via `payment_brackets_by_user`.
   - Default marginal tiers currently set to:
     - 0-10h at $30/hr
     - 10-20h at $33/hr
@@ -146,16 +153,16 @@ When a user has an active session and their Discord status changes to offline, t
     - 50h+ at $50/hr
 
 ## Automatic weekly leaderboard announcement
-The bot automatically posts a weekly leaderboard announcement after **all mapped user timezones** have crossed into the new week (week start from `WEEKLY_ANNOUNCEMENT_WEEK_START`).
+For each configured guild, the bot automatically posts a weekly leaderboard announcement after **all mapped user timezones in that guild** have crossed into the new week (week start from the guild's `announcement_week_start`).
 
-- Schedule: one post per cycle, after the final mapped timezone rolls over into the next week
-- Channel: `1469817014448029807`
+- Schedule: one post per guild per cycle, after the final mapped timezone rolls over into the next week
+- Channel: each guild's `channel_id_by_name["announcements"]` (original server: `1469817014448029807`)
 - Mention: pings `@everyone`
 - Content: leaderboard rows are computed per-user in that user's own local week window (not invoker-local)
 - Visibility: posted publicly in the channel (not ephemeral)
-- Inclusion rule: only users listed in `USER_TIMEZONE_BY_ID` are included
+- Inclusion rule: only users listed in that guild's `user_timezone_by_id` are included
 
-Per-user IANA timezone mapping (`USER_TIMEZONE_BY_ID`) for command-localized windows:
+Per-user IANA timezone mapping (original server's `user_timezone_by_id`) for command-localized windows:
 - `1014149760204156938` (alex) → `Europe/London`
 - `434418013916233755` (yandere) → `Europe/Warsaw` (Poland)
 - `629991962522681365` (wharkk) → `Europe/Paris` (France)

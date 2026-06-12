@@ -15,25 +15,13 @@ import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from bot.db import Database
+from bot.guild_config import (
+    DEFAULT_USER_TIMEZONE,
+    GUILD_CONFIGS,
+    GuildConfig,
+    get_guild_config,
+)
 from bot.time_windows import compute_week_window, overlap_seconds
-
-USER_ID_BY_USERNAME: dict[str, int] = {
-    "alex": 1014149760204156938,
-    "yandere": 434418013916233755,
-    "wharkk": 629991962522681365,
-    "wizoo": 660195981404536832,
-    "maus": 656182155311054858,
-    "BabooCN": 753035328377454612,
-    "calum": 347762453192376324,
-    "me": 761895875361505281,
-}
-
-CHANNEL_ID_BY_NAME: dict[str, int] = {
-    "general": 1468690277563764812,
-    "time-logging": 1475250429926572112,
-    "announcements": 1469817014448029807,
-    "private": 1469800147000103136,
-}
 
 WEEKDAY_MON_INDEX = {
     "monday": 0,
@@ -44,90 +32,6 @@ WEEKDAY_MON_INDEX = {
     "saturday": 5,
     "sunday": 6,
 }
-WEEKLY_ANNOUNCEMENT_WEEK_START = 0  # Monday
-WEEKLY_ANNOUNCEMENT_GRACE_SECONDS = 15 * 60
-ROLE_ID_BY_NAME: dict[str, int] = {
-    "owner": 1468691610899321029,
-    "admin": 1470609632132202526,
-    "ui-artists": 1479224753792221234,
-    "ugc-creators": 1487967901494280202,
-}
-
-ALL_TRACKER_ROLE_NAMES: frozenset[str] = frozenset(ROLE_ID_BY_NAME.keys())
-
-
-COMMAND_ACCESS_BY_NAME: dict[str, frozenset[str]] = {
-    "start": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "stop": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "status": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "help": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "weekly-earnings": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "add-time": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "subtract-time": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "set-time": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "leaderboard": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "hourly-data": frozenset({"owner", "admin", "ui-artists", "ugc-creators"}),
-    "report": frozenset({"owner"}),
-    "payment-data": frozenset({"owner"}),
-    "restoreday": frozenset({"owner"}),
-    "testweeklyannouncement": frozenset({"owner"}),
-    "setreportchannel": frozenset({"owner"}),
-    "setclockedinrole": frozenset({"owner"}),
-    "setnicknamehours": frozenset({"owner"}),
-    "postpanel": frozenset({"owner"}),
-}
-
-for _cmd, _allowed_role_names in COMMAND_ACCESS_BY_NAME.items():
-    assert _allowed_role_names, f"{_cmd}: allowed_role_names must be non-empty"
-    _unknown = _allowed_role_names - ALL_TRACKER_ROLE_NAMES
-    assert not _unknown, f"{_cmd}: unknown role names {_unknown}"
-
-DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR: tuple[tuple[int, int], ...] = (
-    (0, 3000),
-    (10, 3300), 
-    (20, 3600),
-    (30, 4000),
-    (40, 4500), 
-    (50, 5000),
-)
-PAYMENT_BRACKETS_RATE_CENTS_BY_USER: dict[int, tuple[tuple[int, int], ...]] = {
-    USER_ID_BY_USERNAME["alex"]: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
-    USER_ID_BY_USERNAME["wharkk"]: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
-    USER_ID_BY_USERNAME["yandere"]: DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
-    USER_ID_BY_USERNAME["wizoo"]: (
-        (0, 3000),
-    ),
-    USER_ID_BY_USERNAME["maus"]: (
-        (0, 3500),
-        (10, 3750),
-        (20, 4000),
-        (30, 4500),
-        (40, 5000),
-        (50, 6000),
-    ),
-    USER_ID_BY_USERNAME["BabooCN"]: (
-        (0, 1500),
-    ),
-    USER_ID_BY_USERNAME["calum"]: (
-        (0, 3000),
-    ),
-    USER_ID_BY_USERNAME["me"]: (
-        (0, 0),
-    ),
-}
-# IANA tz names (Region/City) so week/day boundaries follow DST. Adjust per person's real location.
-USER_TIMEZONE_BY_ID: dict[int, str] = {
-    USER_ID_BY_USERNAME["me"]: "America/Chicago",
-    USER_ID_BY_USERNAME["alex"]: "Europe/London",
-    USER_ID_BY_USERNAME["wharkk"]: "Europe/Paris",  # France
-    USER_ID_BY_USERNAME["yandere"]: "Europe/Warsaw",  # Poland
-    USER_ID_BY_USERNAME["wizoo"]: "Africa/Cairo",  # Egypt
-    USER_ID_BY_USERNAME["maus"]: "Asia/Manila",  # Philippines
-    USER_ID_BY_USERNAME["calum"]: "Europe/London",
-    USER_ID_BY_USERNAME["BabooCN"]: "America/Los_Angeles",
-}
-DEFAULT_USER_TIMEZONE = "UTC"
-DEFAULT_CLOCKED_IN_ROLE_ID = 1475219245775196434
 OFFLINE_RETURN_PROMPT_TIMEOUT_SECONDS = 24 * 60 * 60
 HELP_VISIBLE_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/start (note?)", "Start a work session timer."),
@@ -589,10 +493,10 @@ def _format_hours_compact(total_seconds: int) -> str:
     return s.rstrip("0").rstrip(".")
 
 
-def _payment_brackets_for_user(user_id: int) -> tuple[tuple[int, int], ...]:
-    return PAYMENT_BRACKETS_RATE_CENTS_BY_USER.get(
+def _payment_brackets_for_user(cfg: GuildConfig, user_id: int) -> tuple[tuple[int, int], ...]:
+    return cfg.payment_brackets_by_user.get(
         int(user_id),
-        DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR,
+        cfg.default_payment_brackets,
     )
 
 
@@ -611,13 +515,13 @@ def _format_payment_brackets_short(brackets: tuple[tuple[int, int], ...]) -> str
 def _compute_marginal_payment_cents(
     total_seconds: int,
     *,
-    brackets: tuple[tuple[int, int], ...] | None = None,
+    brackets: tuple[tuple[int, int], ...],
 ) -> int:
     total_seconds = max(0, int(total_seconds))
     if total_seconds <= 0:
         return 0
 
-    rate_brackets = brackets if brackets is not None else DEFAULT_PAYMENT_BRACKETS_RATE_CENTS_BY_HOUR
+    rate_brackets = brackets
     total_cents = Decimal(0)
     for i, (start_hour, rate_cents_per_hour) in enumerate(rate_brackets):
         start_sec = int(start_hour) * 3600
@@ -1033,8 +937,8 @@ class TimeTrackingCog(commands.Cog):
             return False
         return True
 
-    def _role_ids_for_allowed_names(self, allowed_role_names: frozenset[str]) -> set[int]:
-        return {int(ROLE_ID_BY_NAME[n]) for n in allowed_role_names}
+    def _role_ids_for_allowed_names(self, cfg: GuildConfig, allowed_role_names: frozenset[str]) -> set[int]:
+        return {int(cfg.role_id_by_name[n]) for n in allowed_role_names}
 
     async def _resolve_interaction_member(self, interaction: discord.Interaction) -> discord.Member | None:
         if interaction.guild is None or interaction.user is None:
@@ -1052,12 +956,13 @@ class TimeTrackingCog(commands.Cog):
 
     def _member_has_roles_for_command(
         self,
+        cfg: GuildConfig,
         member: discord.Member,
         guild: discord.Guild,
         command_name: str,
     ) -> bool:
-        allowed_role_names = COMMAND_ACCESS_BY_NAME[command_name]
-        allowed_ids = self._role_ids_for_allowed_names(allowed_role_names)
+        allowed_role_names = cfg.command_access_by_name[command_name]
+        allowed_ids = self._role_ids_for_allowed_names(cfg, allowed_role_names)
         if any(int(role.id) in allowed_ids for role in member.roles):
             return True
         # Server owner can run commands gated on the configured "owner" role without assigning it.
@@ -1065,15 +970,22 @@ class TimeTrackingCog(commands.Cog):
             return True
         return False
 
+    async def _send_interaction_denial(self, interaction: discord.Interaction, msg: str) -> None:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+
     async def _require_command_access(self, interaction: discord.Interaction, *, command_name: str) -> bool:
         assert interaction.guild is not None
+        cfg = get_guild_config(interaction.guild.id)
+        if cfg is None:
+            await self._send_interaction_denial(interaction, "This bot is not configured for this server.")
+            return False
+
         member = await self._resolve_interaction_member(interaction)
-        if member is None or not self._member_has_roles_for_command(member, interaction.guild, command_name):
-            msg = "You are not allowed to use this bot in this server."
-            if interaction.response.is_done():
-                await interaction.followup.send(msg, ephemeral=True)
-            else:
-                await interaction.response.send_message(msg, ephemeral=True)
+        if member is None or not self._member_has_roles_for_command(cfg, member, interaction.guild, command_name):
+            await self._send_interaction_denial(interaction, "You are not allowed to use this bot in this server.")
             return False
 
         return True
@@ -1103,8 +1015,10 @@ class TimeTrackingCog(commands.Cog):
         except ZoneInfoNotFoundError:
             return False
 
-    def _resolve_user_timezone(self, *, user_id: int) -> str:
-        raw = USER_TIMEZONE_BY_ID.get(int(user_id), DEFAULT_USER_TIMEZONE).strip()
+    def _resolve_user_timezone(self, *, guild_id: int, user_id: int) -> str:
+        cfg = get_guild_config(guild_id)
+        tz_map = cfg.user_timezone_by_id if cfg is not None else {}
+        raw = tz_map.get(int(user_id), DEFAULT_USER_TIMEZONE).strip()
         if self._is_valid_timezone(raw):
             return raw
         # Legacy: UTC±N labels from older configs map to fixed Etc/GMT* zones.
@@ -1228,11 +1142,12 @@ class TimeTrackingCog(commands.Cog):
         return None
 
     async def _get_settings(self, guild_id: int) -> dict[str, Any]:
+        cfg = get_guild_config(guild_id)
         await self.db.ensure_guild_settings(
             guild_id=guild_id,
             default_timezone=self.default_timezone,
             default_week_start=self.default_week_start,
-            default_clocked_in_role_id=DEFAULT_CLOCKED_IN_ROLE_ID,
+            default_clocked_in_role_id=cfg.clocked_in_role_id if cfg is not None else None,
         )
         return await self.db.get_guild_settings(guild_id=guild_id)
 
@@ -1260,9 +1175,10 @@ class TimeTrackingCog(commands.Cog):
             window_end=window.end_ts,
         )
 
-    def _compute_weekly_earnings_cents(self, *, user_id: int, week_total_seconds: int) -> int:
+    def _compute_weekly_earnings_cents(self, *, guild_id: int, user_id: int, week_total_seconds: int) -> int:
         """Compute current-week earnings only for explicitly configured users."""
-        brackets = PAYMENT_BRACKETS_RATE_CENTS_BY_USER.get(int(user_id))
+        cfg = get_guild_config(guild_id)
+        brackets = cfg.payment_brackets_by_user.get(int(user_id)) if cfg is not None else None
         if not brackets:
             return 0
         return _compute_marginal_payment_cents(int(week_total_seconds), brackets=brackets)
@@ -1385,12 +1301,15 @@ class TimeTrackingCog(commands.Cog):
         cmd = interaction.command
         if cmd is None:
             return []
+        cfg = get_guild_config(interaction.guild.id)
+        if cfg is None:
+            return []
         member = await self._resolve_interaction_member(interaction)
-        if member is None or not self._member_has_roles_for_command(member, interaction.guild, cmd.name):
+        if member is None or not self._member_has_roles_for_command(cfg, member, interaction.guild, cmd.name):
             return []
 
         now_ts = int(time.time())
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
         options = self._recent_adjustment_date_options(now_ts=now_ts, tz_name=tz_name, days=7)
         q = (current or "").strip().lower()
 
@@ -1419,10 +1338,13 @@ class TimeTrackingCog(commands.Cog):
         assert interaction.guild is not None
         assert interaction.user is not None
 
-        audit_channel = interaction.guild.get_channel(CHANNEL_ID_BY_NAME["general"])
+        cfg = get_guild_config(interaction.guild.id)
+        assert cfg is not None  # _require_command_access already rejected unconfigured guilds.
+        audit_channel_id = cfg.channel_id_by_name["general"]
+        audit_channel = interaction.guild.get_channel(audit_channel_id)
         if audit_channel is None:
             try:
-                fetched = await interaction.guild.fetch_channel(CHANNEL_ID_BY_NAME["general"])
+                fetched = await interaction.guild.fetch_channel(audit_channel_id)
                 audit_channel = fetched
             except discord.HTTPException:
                 audit_channel = None
@@ -1448,7 +1370,7 @@ class TimeTrackingCog(commands.Cog):
                     return
 
         now_ts = int(time.time())
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
         parsed = self._parse_recent_adjustment_date(
             selected_value=str(date_value),
             now_ts=now_ts,
@@ -1830,22 +1752,22 @@ class TimeTrackingCog(commands.Cog):
         )
         return embeds
 
-    def _announcement_user_ids(self) -> list[int]:
-        return sorted(int(uid) for uid in USER_TIMEZONE_BY_ID.keys())
+    def _announcement_user_ids(self, cfg: GuildConfig) -> list[int]:
+        return sorted(int(uid) for uid in cfg.user_timezone_by_id.keys())
 
-    def _compute_announcement_cycle_state(self, *, now_ts: int) -> AnnouncementCycleState | None:
-        user_ids = self._announcement_user_ids()
+    def _compute_announcement_cycle_state(self, cfg: GuildConfig, *, now_ts: int) -> AnnouncementCycleState | None:
+        user_ids = self._announcement_user_ids(cfg)
         if not user_ids:
             return None
 
         start_timestamps: list[int] = []
         end_timestamps: list[int] = []
         for user_id in user_ids:
-            tz_name = self._resolve_user_timezone(user_id=int(user_id))
+            tz_name = self._resolve_user_timezone(guild_id=cfg.guild_id, user_id=int(user_id))
             current_week = compute_week_window(
                 now=_dt_from_ts(now_ts),
                 tz_name=tz_name,
-                week_start=WEEKLY_ANNOUNCEMENT_WEEK_START,
+                week_start=cfg.announcement_week_start,
                 week_offset=0,
             )
             start_timestamps.append(int(current_week.start_ts))
@@ -1868,26 +1790,26 @@ class TimeTrackingCog(commands.Cog):
 
     async def _build_weekly_announcement_embed_per_user_local(
         self,
+        cfg: GuildConfig,
         *,
-        guild_id: int,
         now_ts: int,
         week_offset: int,
     ) -> discord.Embed:
         day_labels = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        ws = int(WEEKLY_ANNOUNCEMENT_WEEK_START)
+        ws = int(cfg.announcement_week_start)
         day_labels = day_labels[ws:] + day_labels[:ws]
 
         breakdowns: list[tuple[LeaderboardUserBreakdown, str, int, int]] = []
-        for user_id in self._announcement_user_ids():
-            tz_name = self._resolve_user_timezone(user_id=int(user_id))
+        for user_id in self._announcement_user_ids(cfg):
+            tz_name = self._resolve_user_timezone(guild_id=cfg.guild_id, user_id=int(user_id))
             window = compute_week_window(
                 now=_dt_from_ts(now_ts),
                 tz_name=tz_name,
-                week_start=WEEKLY_ANNOUNCEMENT_WEEK_START,
+                week_start=cfg.announcement_week_start,
                 week_offset=int(week_offset),
             )
             rows = await self.db.list_sessions_overlapping_window(
-                guild_id=int(guild_id),
+                guild_id=int(cfg.guild_id),
                 user_id=int(user_id),
                 window_start=window.start_ts,
                 window_end=window.end_ts,
@@ -1950,37 +1872,42 @@ class TimeTrackingCog(commands.Cog):
             joined += f"\n\n… and {len(blocks) - kept} more"
 
         week_scope = "Current local week per user" if int(week_offset) == 0 else "Previous local week per user"
+        week_start_label = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][ws]
         embed = discord.Embed(title="Weekly hours leaderboard", color=discord.Color.purple())
         embed.add_field(name="Week scope", value=week_scope, inline=False)
-        embed.add_field(name="Week start", value="Monday", inline=True)
-        embed.add_field(name="Included users", value=str(len(self._announcement_user_ids())), inline=True)
+        embed.add_field(name="Week start", value=week_start_label, inline=True)
+        embed.add_field(name="Included users", value=str(len(self._announcement_user_ids(cfg))), inline=True)
         embed.description = joined if joined else "No sessions found for this local-week cycle."
         embed.set_footer(text="Daily bullets and totals are computed per user's local week boundaries.")
         return embed
 
-    async def _maybe_send_weekly_announcement(self, *, cycle_anchor_ts: int) -> None:
+    async def _maybe_send_weekly_announcement(self, cfg: GuildConfig, *, cycle_anchor_ts: int) -> None:
         now_ts = int(time.time())
+        announcements_channel_id = cfg.channel_id_by_name["announcements"]
         already_posted = await self.db.has_weekly_leaderboard_post(
-            channel_id=CHANNEL_ID_BY_NAME["announcements"],
+            channel_id=announcements_channel_id,
             week_start_ts=int(cycle_anchor_ts),
         )
         if already_posted:
             return
 
-        channel = self.bot.get_channel(CHANNEL_ID_BY_NAME["announcements"])
+        channel = self.bot.get_channel(announcements_channel_id)
         if channel is None:
             try:
-                channel = await self.bot.fetch_channel(CHANNEL_ID_BY_NAME["announcements"])
+                channel = await self.bot.fetch_channel(announcements_channel_id)
             except discord.HTTPException:
-                print("Weekly leaderboard announcement: failed to fetch target channel.")
+                print(f"Weekly leaderboard announcement (guild {cfg.guild_id}): failed to fetch target channel.")
                 return
 
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
-            print("Weekly leaderboard announcement: target channel is not a text channel/thread.")
+            print(
+                f"Weekly leaderboard announcement (guild {cfg.guild_id}): "
+                "target channel is not a text channel/thread."
+            )
             return
 
         embed = await self._build_weekly_announcement_embed_per_user_local(
-            guild_id=channel.guild.id,
+            cfg,
             now_ts=now_ts,
             week_offset=-1,
         )
@@ -1991,14 +1918,17 @@ class TimeTrackingCog(commands.Cog):
                 allowed_mentions=discord.AllowedMentions(everyone=True),
             )
         except discord.Forbidden:
-            print("Weekly leaderboard announcement: missing permission to post in target channel.")
+            print(
+                f"Weekly leaderboard announcement (guild {cfg.guild_id}): "
+                "missing permission to post in target channel."
+            )
             return
         except discord.HTTPException:
-            print("Weekly leaderboard announcement: Discord API error while posting.")
+            print(f"Weekly leaderboard announcement (guild {cfg.guild_id}): Discord API error while posting.")
             return
 
         await self.db.mark_weekly_leaderboard_post(
-            channel_id=CHANNEL_ID_BY_NAME["announcements"],
+            channel_id=announcements_channel_id,
             week_start_ts=int(cycle_anchor_ts),
             posted_at_ts=now_ts,
         )
@@ -2008,21 +1938,33 @@ class TimeTrackingCog(commands.Cog):
         while not self.bot.is_closed():
             try:
                 now_ts = int(time.time())
-                cycle_state = self._compute_announcement_cycle_state(now_ts=now_ts)
-                if cycle_state is None:
+                next_check_candidates: list[int] = []
+
+                for cfg in GUILD_CONFIGS.values():
+                    try:
+                        cycle_state = self._compute_announcement_cycle_state(cfg, now_ts=now_ts)
+                        if cycle_state is None:
+                            continue
+
+                        if (
+                            cycle_state.all_users_rolled
+                            and (now_ts - int(cycle_state.rollover_anchor_ts)) <= cfg.announcement_grace_seconds
+                            and (now_ts - int(cycle_state.rollover_anchor_ts)) >= 0
+                        ):
+                            await self._maybe_send_weekly_announcement(
+                                cfg,
+                                cycle_anchor_ts=int(cycle_state.rollover_anchor_ts),
+                            )
+
+                        next_check_candidates.append(int(cycle_state.next_check_ts))
+                    except Exception as exc:
+                        print(f"Weekly leaderboard announcement (guild {cfg.guild_id}) error: {exc!r}")
+
+                if not next_check_candidates:
                     await asyncio.sleep(60)
                     continue
 
-                if (
-                    cycle_state.all_users_rolled
-                    and (now_ts - int(cycle_state.rollover_anchor_ts)) <= WEEKLY_ANNOUNCEMENT_GRACE_SECONDS
-                    and (now_ts - int(cycle_state.rollover_anchor_ts)) >= 0
-                ):
-                    await self._maybe_send_weekly_announcement(
-                        cycle_anchor_ts=int(cycle_state.rollover_anchor_ts),
-                    )
-
-                sleep_for = max(1, int(cycle_state.next_check_ts) - int(now_ts))
+                sleep_for = max(1, min(next_check_candidates) - int(now_ts))
                 await asyncio.sleep(sleep_for)
             except asyncio.CancelledError:
                 raise
@@ -2067,10 +2009,14 @@ class TimeTrackingCog(commands.Cog):
     async def _get_offline_return_prompt_channel(
         self, guild: discord.Guild
     ) -> discord.TextChannel | discord.Thread | None:
-        channel = guild.get_channel(CHANNEL_ID_BY_NAME["time-logging"])
+        cfg = get_guild_config(guild.id)
+        if cfg is None:
+            return None
+        prompt_channel_id = cfg.channel_id_by_name["time-logging"]
+        channel = guild.get_channel(prompt_channel_id)
         if channel is None:
             try:
-                channel = await guild.fetch_channel(CHANNEL_ID_BY_NAME["time-logging"])
+                channel = await guild.fetch_channel(prompt_channel_id)
             except discord.HTTPException:
                 return None
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
@@ -2395,7 +2341,7 @@ class TimeTrackingCog(commands.Cog):
 
         role_warning = await self._update_clocked_in_role(interaction, clocked_in=False)
         settings = await self._get_settings(interaction.guild.id)
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
         weekly = await self._compute_weekly_total(
             guild_id=interaction.guild.id,
             user_id=interaction.user.id,
@@ -2433,6 +2379,8 @@ class TimeTrackingCog(commands.Cog):
             if before.guild is None or after.guild is None:
                 return
             if before.guild.id != after.guild.id:
+                return
+            if get_guild_config(after.guild.id) is None:
                 return
             if before.status == after.status:
                 return
@@ -2543,7 +2491,7 @@ class TimeTrackingCog(commands.Cog):
         role_warning = await self._update_clocked_in_role(interaction, clocked_in=True)
 
         settings = await self._get_settings(interaction.guild.id)
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
         daily_total = await self._compute_daily_total_seconds(
             guild_id=interaction.guild.id,
             user_id=interaction.user.id,
@@ -2559,6 +2507,7 @@ class TimeTrackingCog(commands.Cog):
             week_start=settings["week_start"],
         )
         weekly_earnings_cents = self._compute_weekly_earnings_cents(
+            guild_id=interaction.guild.id,
             user_id=interaction.user.id,
             week_total_seconds=weekly_total.total_seconds,
         )
@@ -2686,7 +2635,7 @@ class TimeTrackingCog(commands.Cog):
         role_warning = await self._update_clocked_in_role(interaction, clocked_in=False)
 
         settings = await self._get_settings(interaction.guild.id)
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
         daily_total = await self._compute_daily_total_seconds(
             guild_id=interaction.guild.id,
             user_id=interaction.user.id,
@@ -2708,6 +2657,7 @@ class TimeTrackingCog(commands.Cog):
             week_start=settings["week_start"],
         )
         weekly_earnings_cents = self._compute_weekly_earnings_cents(
+            guild_id=interaction.guild.id,
             user_id=interaction.user.id,
             week_total_seconds=weekly.total_seconds,
         )
@@ -2757,7 +2707,7 @@ class TimeTrackingCog(commands.Cog):
         role_warning = await self._update_clocked_in_role(interaction, clocked_in=(active is not None))
 
         settings = await self._get_settings(interaction.guild.id)
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
         daily_total = await self._compute_daily_total_seconds(
             guild_id=interaction.guild.id,
             user_id=interaction.user.id,
@@ -2779,6 +2729,7 @@ class TimeTrackingCog(commands.Cog):
             week_start=settings["week_start"],
         )
         weekly_earnings_cents = self._compute_weekly_earnings_cents(
+            guild_id=interaction.guild.id,
             user_id=interaction.user.id,
             week_total_seconds=weekly.total_seconds,
         )
@@ -2857,7 +2808,7 @@ class TimeTrackingCog(commands.Cog):
 
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
         embed = await self._build_leaderboard_embed(
             guild_id=interaction.guild.id,
             now_ts=now_ts,
@@ -2906,7 +2857,7 @@ class TimeTrackingCog(commands.Cog):
 
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
         embeds = await self._build_hourly_data_embeds(
             guild_id=interaction.guild.id,
             now_ts=now_ts,
@@ -2967,7 +2918,7 @@ class TimeTrackingCog(commands.Cog):
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
         week_start = int(settings["week_start"])
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
         window = compute_week_window(
             now=_dt_from_ts(now_ts),
             tz_name=tz_name,
@@ -2982,7 +2933,9 @@ class TimeTrackingCog(commands.Cog):
             tz_name=tz_name,
             week_start=week_start,
         )
-        brackets = _payment_brackets_for_user(interaction.user.id)
+        cfg = get_guild_config(interaction.guild.id)
+        assert cfg is not None  # _require_command_access already rejected unconfigured guilds.
+        brackets = _payment_brackets_for_user(cfg, interaction.user.id)
         payment_cents = _compute_marginal_payment_cents(weekly.total_seconds, brackets=brackets)
         hours = Decimal(int(weekly.total_seconds)) / Decimal(3600)
 
@@ -3050,7 +3003,7 @@ class TimeTrackingCog(commands.Cog):
         target = user or interaction.user
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
         day_progress, day_ends = self._format_day_progress(now_ts=now_ts, tz_name=tz_name)
 
         window = compute_week_window(
@@ -3187,6 +3140,9 @@ class TimeTrackingCog(commands.Cog):
         assert interaction.guild is not None
         assert interaction.user is not None
 
+        cfg = get_guild_config(interaction.guild.id)
+        assert cfg is not None  # _require_command_access already rejected unconfigured guilds.
+
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
         week_start = int(settings["week_start"])
@@ -3201,8 +3157,8 @@ class TimeTrackingCog(commands.Cog):
             ),
         )
 
-        for user_id in PAYMENT_BRACKETS_RATE_CENTS_BY_USER:
-            tz_name = self._resolve_user_timezone(user_id=int(user_id))
+        for user_id in cfg.payment_brackets_by_user:
+            tz_name = self._resolve_user_timezone(guild_id=cfg.guild_id, user_id=int(user_id))
             window = compute_week_window(
                 now=_dt_from_ts(now_ts),
                 tz_name=tz_name,
@@ -3216,7 +3172,7 @@ class TimeTrackingCog(commands.Cog):
                 window_start=window.start_ts,
                 window_end=window.end_ts,
             )
-            brackets = _payment_brackets_for_user(int(user_id))
+            brackets = _payment_brackets_for_user(cfg, int(user_id))
             payment_cents = _compute_marginal_payment_cents(weekly.total_seconds, brackets=brackets)
             grand_total_cents += payment_cents
 
@@ -3247,7 +3203,8 @@ class TimeTrackingCog(commands.Cog):
         embed.add_field(name="Total owed", value=f"**{_format_usd_from_cents(grand_total_cents)}**", inline=False)
         embed.set_footer(
             text=(
-                "Marginal rates are configured per user in PAYMENT_BRACKETS_RATE_CENTS_BY_USER."
+                "Marginal rates are configured per user in this guild's "
+                "payment_brackets_by_user (bot/guild_config.py)."
             )
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -3313,7 +3270,7 @@ class TimeTrackingCog(commands.Cog):
         now_ts = int(time.time())
         settings = await self._get_settings(interaction.guild.id)
         week_start = int(settings["week_start"])
-        tz_name = self._resolve_user_timezone(user_id=interaction.user.id)
+        tz_name = self._resolve_user_timezone(guild_id=interaction.guild.id, user_id=interaction.user.id)
 
         window = compute_week_window(
             now=_dt_from_ts(now_ts),
@@ -3411,9 +3368,12 @@ class TimeTrackingCog(commands.Cog):
         if not await _defer_ephemeral_thinking(interaction, context="testweeklyannouncement"):
             return
 
+        cfg = get_guild_config(interaction.guild.id)
+        assert cfg is not None  # _require_command_access already rejected unconfigured guilds.
+
         now_ts = int(time.time())
         embed = await self._build_weekly_announcement_embed_per_user_local(
-            guild_id=interaction.guild.id,
+            cfg,
             now_ts=now_ts,
             week_offset=0,  # Current-week preview for easier testing.
         )

@@ -7,8 +7,9 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from bot.config import Config, load_config
-from bot.cogs.time_tracking import COMMAND_ACCESS_BY_NAME, ROLE_ID_BY_NAME, TimeTrackingCog
+from bot.cogs.time_tracking import TimeTrackingCog
 from bot.db import Database
+from bot.guild_config import GUILD_CONFIGS, GuildConfig
 
 
 class TimeTrackerBot(commands.Bot):
@@ -40,29 +41,33 @@ class TimeTrackerBot(commands.Bot):
             guild = discord.Object(id=self.config.clear_guild_commands_id)
             self.tree.clear_commands(guild=guild)
             await self.tree.sync(guild=guild)
+
+        # Copy global commands into every configured guild for instant availability.
+        sync_guild_ids = set(GUILD_CONFIGS.keys())
         if self.config.dev_guild_id is not None:
-            guild = discord.Object(id=self.config.dev_guild_id)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
+            sync_guild_ids.add(int(self.config.dev_guild_id))
+        if sync_guild_ids:
+            for guild_id in sorted(sync_guild_ids):
+                guild = discord.Object(id=guild_id)
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
-        await self._sync_dev_guild_command_permissions()
 
-    async def _sync_dev_guild_command_permissions(self) -> None:
-        if self.config.dev_guild_id is None:
-            print("Skipping role-lock command visibility sync: DEV_GUILD_ID is not configured.")
-            return
+        for cfg in GUILD_CONFIGS.values():
+            await self._sync_guild_command_permissions(cfg)
 
+    async def _sync_guild_command_permissions(self, guild_cfg: GuildConfig) -> None:
         if self.application_id is None:
             print("Skipping role-lock command visibility sync: application_id is unavailable.")
             return
 
-        guild_id = int(self.config.dev_guild_id)
+        guild_id = int(guild_cfg.guild_id)
         guild = discord.Object(id=guild_id)
         try:
             guild_commands = await self.tree.fetch_commands(guild=guild)
         except discord.HTTPException as exc:
-            print(f"Failed to fetch guild commands for permission sync: {exc!r}")
+            print(f"Failed to fetch guild commands for permission sync (guild {guild_id}): {exc!r}")
             return
 
         if not guild_commands:
@@ -71,11 +76,11 @@ class TimeTrackerBot(commands.Bot):
 
         updated = 0
         for command in guild_commands:
-            allowed_role_names = COMMAND_ACCESS_BY_NAME.get(command.name)
+            allowed_role_names = guild_cfg.command_access_by_name.get(command.name)
             if allowed_role_names is None:
                 print(
-                    f"Skipping permission sync for unknown guild command '{command.name}' ({command.id}): "
-                    "not listed in COMMAND_ACCESS_BY_NAME."
+                    f"Skipping permission sync for unknown guild command '{command.name}' ({command.id}) "
+                    f"in guild {guild_id}: not listed in command_access_by_name."
                 )
                 continue
 
@@ -88,7 +93,7 @@ class TimeTrackerBot(commands.Bot):
             ]
             seen_ids: set[int] = {guild_id}
             for role_name in allowed_role_names:
-                role_id = int(ROLE_ID_BY_NAME[role_name])
+                role_id = int(guild_cfg.role_id_by_name[role_name])
                 if role_id in seen_ids:
                     continue
                 seen_ids.add(role_id)
@@ -110,7 +115,10 @@ class TimeTrackerBot(commands.Bot):
                 )
                 updated += 1
             except discord.HTTPException as exc:
-                print(f"Failed to sync command permissions for '{command.name}' ({command.id}): {exc!r}")
+                print(
+                    f"Failed to sync command permissions for '{command.name}' ({command.id}) "
+                    f"in guild {guild_id}: {exc!r}"
+                )
 
         print(
             f"Applied role-lock command visibility permissions to {updated}/{len(guild_commands)} "
