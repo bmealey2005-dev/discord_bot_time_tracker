@@ -67,7 +67,7 @@ Environment variables (see `.env.example`):
 - `DEFAULT_TIMEZONE` (default: `UTC`; see [Weekly totals](#weekly-totals-resets-weekly))
 - `DEFAULT_WEEK_START` (default: `0` which is Monday)
 - `DEV_GUILD_ID` (optional; speeds up slash command registration)
-- `DATABASE_URL` (optional; preferred in production, e.g. Railway Postgres)
+- `DATABASE_URL` (optional; preferred in production, e.g. Supabase Postgres)
 - `DB_PATH` (default: `./data/time_tracker.sqlite3`)
 
 ## Weekly totals ("resets weekly")
@@ -195,34 +195,32 @@ Any always-on machine works:
 - Linux VPS: run `python -m bot.main` under `systemd` with restart-on-failure, and persist the `data/` directory.
 - Windows: run with Task Scheduler (on logon) or a service wrapper like NSSM, and persist the `data/` directory.
 
-### Railway (SQLite persistence)
-To keep data across deploys, use a persistent Railway volume:
+### Render + Supabase (recommended: Postgres, safest)
+Use Supabase Postgres so data is independent of the app container filesystem:
 
-1. In Railway, open your service and add a **Volume** mounted at `/data`.
-2. Set environment variable `DB_PATH=/data/time_tracker.sqlite3`.
-3. Redeploy and verify rows persist after the next deploy.
-
-The bot now defaults to `/data/time_tracker.sqlite3` when it detects Railway, but persistence still requires a mounted volume at `/data`.
-
-### Railway (recommended: Postgres, safest)
-Use Railway Postgres so data is independent of the app container filesystem:
-
-1. In Railway, add a **Postgres** service to your project.
-2. In the bot service variables, set:
-   - `DATABASE_URL=${{Postgres.DATABASE_URL}}`
-3. Redeploy the bot service.
-4. Confirm data survives redeploys by creating a test session, redeploying, then checking `/leaderboard`.
+1. Create a Supabase project (or use an existing one).
+2. In Render, create a **Background Worker** connected to this GitHub repo.
+   - Runtime: Python
+   - Build: `pip install -r requirements.txt`
+   - Start: `python -m bot.main`
+   - Instance: Starter ($7/mo) for always-on operation
+3. Set environment variables on the Render service:
+   - `DATABASE_URL` = Supabase pooler connection string (port 6543)
+   - `DISCORD_TOKEN` = your bot token
+   - `DEFAULT_TIMEZONE` = `America/Chicago`
+   - `DEFAULT_WEEK_START` = `0`
+4. Deploy and confirm the bot comes online (check logs for `Logged in as ...`).
 
 When `DATABASE_URL` is set, the bot uses Postgres and ignores `DB_PATH`.
 
-#### Optional: migrate existing SQLite data to Postgres
+#### Migrate existing SQLite data to Supabase
 If you have data in `./data/time_tracker.sqlite3`, migrate it once:
 
 ```powershell
 python scripts/migrate_sqlite_to_postgres.py --sqlite-path "./data/time_tracker.sqlite3" --database-url "$env:DATABASE_URL"
 ```
 
-This migration script truncates destination `sessions` and `guild_settings` before importing, so run it only against the intended Postgres database.
+This migration script truncates destination tables before importing, so run it only against the intended Postgres database.
 
 ### Example: systemd service (Linux)
 Create `/etc/systemd/system/discord-time-tracker.service` (adjust paths/user):

@@ -52,6 +52,7 @@ class GuildConfig:
     )
     announcement_week_start: int = 0  # 0=Monday .. 6=Sunday
     announcement_grace_seconds: int = 15 * 60
+    weekly_announcements_enabled: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +193,7 @@ SERVER_B_CONFIG = GuildConfig(
     default_payment_brackets=_SERVER_B_FLAT_PAYMENT_BRACKETS,
     clocked_in_role_id=1514873278458626118,
     command_access_by_name=_SERVER_B_COMMAND_ACCESS,
+    weekly_announcements_enabled=False,
 )
 
 

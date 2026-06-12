@@ -1,0 +1,16 @@
+services:
+  - type: worker
+    name: discord-time-tracker
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m bot.main
+    plan: starter
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DEFAULT_TIMEZONE
+        value: America/Chicago
+      - key: DEFAULT_WEEK_START
+        value: "0"

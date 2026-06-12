@@ -36,27 +36,24 @@ class TimeTrackerBot(commands.Bot):
         self.add_view(cog.panel_persistent_view)
 
         # Sync slash commands.
-        if self.config.clear_guild_commands_id is not None:
-            # One-time cleanup: remove guild-specific commands (fixes duplicates).
-            guild = discord.Object(id=self.config.clear_guild_commands_id)
-            self.tree.clear_commands(guild=guild)
-            await self.tree.sync(guild=guild)
-
-        # Copy global commands into every configured guild for instant availability.
+        # Commands are registered GLOBALLY only. Guild-scoped copies are cleared
+        # to avoid duplicate entries in the command picker (each command would
+        # otherwise appear twice: once global, once guild-scoped).
         # NOTE: Discord does not allow bot tokens to edit per-command role
         # permissions (error 20001), so command *visibility* is managed in each
         # server via Server Settings -> Integrations -> this app -> Commands.
         # Actual access is enforced at runtime by _require_command_access.
-        sync_guild_ids = set(GUILD_CONFIGS.keys())
+        clear_guild_ids = set(GUILD_CONFIGS.keys())
         if self.config.dev_guild_id is not None:
-            sync_guild_ids.add(int(self.config.dev_guild_id))
-        if sync_guild_ids:
-            for guild_id in sorted(sync_guild_ids):
-                guild = discord.Object(id=guild_id)
-                self.tree.copy_global_to(guild=guild)
-                await self.tree.sync(guild=guild)
-        else:
-            await self.tree.sync()
+            clear_guild_ids.add(int(self.config.dev_guild_id))
+        if self.config.clear_guild_commands_id is not None:
+            clear_guild_ids.add(int(self.config.clear_guild_commands_id))
+        for guild_id in sorted(clear_guild_ids):
+            guild = discord.Object(id=guild_id)
+            self.tree.clear_commands(guild=guild)
+            await self.tree.sync(guild=guild)
+
+        await self.tree.sync()
 
     async def close(self) -> None:
         try:

@@ -10,7 +10,9 @@ import asyncpg
 from bot.db import Database
 
 
-def _read_sqlite_rows(sqlite_path: Path) -> tuple[list[sqlite3.Row], list[sqlite3.Row]]:
+def _read_sqlite_rows(
+    sqlite_path: Path,
+) -> tuple[list[sqlite3.Row], list[sqlite3.Row], list[sqlite3.Row], list[sqlite3.Row]]:
     conn = sqlite3.connect(str(sqlite_path))
     conn.row_factory = sqlite3.Row
     try:
@@ -28,7 +30,20 @@ def _read_sqlite_rows(sqlite_path: Path) -> tuple[list[sqlite3.Row], list[sqlite
             ORDER BY id ASC;
             """
         ).fetchall()
-        return guild_settings, sessions
+        weekly_leaderboard_posts = conn.execute(
+            """
+            SELECT channel_id, week_start_ts, posted_at_ts
+            FROM weekly_leaderboard_posts;
+            """
+        ).fetchall()
+        session_offline_flags = conn.execute(
+            """
+            SELECT guild_id, user_id, session_id, offline_started_at,
+                   prompt_message_id, prompted_at, resolved_at
+            FROM session_offline_flags;
+            """
+        ).fetchall()
+        return guild_settings, sessions, weekly_leaderboard_posts, session_offline_flags
     finally:
         conn.close()
 
@@ -46,14 +61,14 @@ async def _migrate(sqlite_path: Path, database_url: str, schema_sql_path: Path) 
     if not sqlite_path.exists():
         raise FileNotFoundError(f"SQLite file not found: {sqlite_path}")
 
-    guild_settings, sessions = _read_sqlite_rows(sqlite_path)
+    guild_settings, sessions, weekly_leaderboard_posts, session_offline_flags = _read_sqlite_rows(sqlite_path)
     await _ensure_postgres_schema(database_url, schema_sql_path)
 
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=3, command_timeout=60)
     try:
         async with pool.acquire() as conn:
             async with conn.transaction():
-                await conn.execute("TRUNCATE TABLE sessions, guild_settings RESTART IDENTITY;")
+                await conn.execute("TRUNCATE TABLE sessions, guild_settings, weekly_leaderboard_posts, session_offline_flags RESTART IDENTITY;")
 
                 for row in guild_settings:
                     await conn.execute(
@@ -97,10 +112,40 @@ async def _migrate(sqlite_path: Path, database_url: str, schema_sql_path: Path) 
                     );
                     """
                 )
+
+                for row in weekly_leaderboard_posts:
+                    await conn.execute(
+                        """
+                        INSERT INTO weekly_leaderboard_posts(channel_id, week_start_ts, posted_at_ts)
+                        VALUES($1, $2, $3);
+                        """,
+                        row["channel_id"],
+                        int(row["week_start_ts"]),
+                        int(row["posted_at_ts"]),
+                    )
+
+                for row in session_offline_flags:
+                    await conn.execute(
+                        """
+                        INSERT INTO session_offline_flags(
+                            guild_id, user_id, session_id, offline_started_at,
+                            offline_accumulated_seconds, offline_open_started_at,
+                            prompt_message_id, prompted_at, resolved_at
+                        )
+                        VALUES($1, $2, $3, $4, 0, NULL, $5, $6, $7);
+                        """,
+                        row["guild_id"],
+                        row["user_id"],
+                        int(row["session_id"]),
+                        int(row["offline_started_at"]),
+                        row["prompt_message_id"],
+                        int(row["prompted_at"]) if row["prompted_at"] is not None else None,
+                        int(row["resolved_at"]) if row["resolved_at"] is not None else None,
+                    )
     finally:
         await pool.close()
 
-    print(f"Migrated {len(guild_settings)} guild_settings rows and {len(sessions)} sessions rows.")
+    print(f"Migrated {len(guild_settings)} guild_settings, {len(sessions)} sessions, {len(weekly_leaderboard_posts)} weekly_leaderboard_posts, {len(session_offline_flags)} session_offline_flags.")
 
 
 def _parse_args() -> argparse.Namespace:

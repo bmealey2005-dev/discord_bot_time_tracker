@@ -33,19 +33,6 @@ def _parse_optional_int(name: str, raw: str | None) -> int | None:
         raise ValueError(f"Invalid int for {name}: {raw!r}") from exc
 
 
-def _is_running_on_railway() -> bool:
-    # Railway injects these environment variables into deployed services.
-    return any(
-        os.getenv(name)
-        for name in (
-            "RAILWAY_PROJECT_ID",
-            "RAILWAY_SERVICE_ID",
-            "RAILWAY_ENVIRONMENT_ID",
-            "RAILWAY_DEPLOYMENT_ID",
-        )
-    )
-
-
 def load_config() -> Config:
     token = os.getenv("DISCORD_TOKEN", "").strip()
     if not token:
@@ -65,8 +52,7 @@ def load_config() -> Config:
         "CLEAR_GUILD_COMMANDS_ID", os.getenv("CLEAR_GUILD_COMMANDS_ID")
     )
     database_url = os.getenv("DATABASE_URL", "").strip() or None
-    # On Railway, default to /data so it can be backed by a mounted volume.
-    default_db_path = "/data/time_tracker.sqlite3" if _is_running_on_railway() else "./data/time_tracker.sqlite3"
+    default_db_path = "./data/time_tracker.sqlite3"
     db_path = os.getenv("DB_PATH", default_db_path).strip() or default_db_path
 
     return Config(

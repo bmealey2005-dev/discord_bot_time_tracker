@@ -1941,6 +1941,8 @@ class TimeTrackingCog(commands.Cog):
                 next_check_candidates: list[int] = []
 
                 for cfg in GUILD_CONFIGS.values():
+                    if not cfg.weekly_announcements_enabled:
+                        continue
                     try:
                         cycle_state = self._compute_announcement_cycle_state(cfg, now_ts=now_ts)
                         if cycle_state is None:
