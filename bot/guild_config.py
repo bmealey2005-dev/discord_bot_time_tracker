@@ -135,40 +135,69 @@ SERVER_A_CONFIG = GuildConfig(
 
 
 # ---------------------------------------------------------------------------
-# Server B (second team) - template; fill in ids and uncomment to activate.
+# Server B (second team)
 # ---------------------------------------------------------------------------
 
-# _SERVER_B_GUILD_ID = 1514839205627428864
-#
-# SERVER_B_CONFIG = GuildConfig(
-#     guild_id=_SERVER_B_GUILD_ID,
-#     role_id_by_name={
-#         "owner": 0,
-#         "admin": 0,
-#         "ui-artists": 0,
-#         "ugc-creators": 0,
-#     },
-#     channel_id_by_name={
-#         "general": 0,
-#         "time-logging": 0,
-#         "announcements": 0,
-#     },
-#     user_timezone_by_id={
-#         # user_id: "Region/City",
-#     },
-#     payment_brackets_by_user={
-#         # user_id: ((0, 3000), (10, 3300)),
-#     },
-#     default_payment_brackets=(
-#         (0, 3000),
-#     ),
-#     clocked_in_role_id=None,
-# )
+_SERVER_B_GUILD_ID = 1514839205627428864
+
+_SERVER_B_USER_ID_BY_USERNAME: dict[str, int] = {
+    "aiden": 646166056594833443,
+    "aric": 575499831720542261,
+    "bilolbek": 483005370676281364,
+    "Abheek": 745063586422063214,
+    "me": 761895875361505281,
+}
+
+# Server B has no ui-artists / ugc-creators roles, so restrict the shared
+# command map to the role names that exist there (owner-only commands stay
+# owner-only; employee commands become owner+admin).
+_SERVER_B_ROLE_NAMES = frozenset({"owner", "admin"})
+_SERVER_B_COMMAND_ACCESS: dict[str, frozenset[str]] = {
+    cmd: allowed & _SERVER_B_ROLE_NAMES
+    for cmd, allowed in DEFAULT_COMMAND_ACCESS_BY_NAME.items()
+}
+
+# Flat $20/hr for everyone on Server B (no marginal tiers).
+_SERVER_B_FLAT_PAYMENT_BRACKETS: tuple[tuple[int, int], ...] = (
+    (0, 2000),
+)
+
+SERVER_B_CONFIG = GuildConfig(
+    guild_id=_SERVER_B_GUILD_ID,
+    role_id_by_name={
+        "owner": 1514870932559233115,
+        "admin": 1514870738157310033,
+    },
+    channel_id_by_name={
+        "general": 1514839206088933378,
+        "time-logging": 1514872989236203602,
+        "announcements": 1514873053069181189,
+    },
+    user_timezone_by_id={
+        _SERVER_B_USER_ID_BY_USERNAME["me"]: "America/Chicago",
+        _SERVER_B_USER_ID_BY_USERNAME["aiden"]: "America/Denver",  # New Mexico (Mountain Time)
+        _SERVER_B_USER_ID_BY_USERNAME["aric"]: "America/Chicago",
+        _SERVER_B_USER_ID_BY_USERNAME["bilolbek"]: "America/Chicago",
+        _SERVER_B_USER_ID_BY_USERNAME["Abheek"]: "America/Santiago",  # Chile
+    },
+    payment_brackets_by_user={
+        _SERVER_B_USER_ID_BY_USERNAME["aiden"]: _SERVER_B_FLAT_PAYMENT_BRACKETS,
+        _SERVER_B_USER_ID_BY_USERNAME["aric"]: _SERVER_B_FLAT_PAYMENT_BRACKETS,
+        _SERVER_B_USER_ID_BY_USERNAME["bilolbek"]: _SERVER_B_FLAT_PAYMENT_BRACKETS,
+        _SERVER_B_USER_ID_BY_USERNAME["Abheek"]: _SERVER_B_FLAT_PAYMENT_BRACKETS,
+        _SERVER_B_USER_ID_BY_USERNAME["me"]: (
+            (0, 0),
+        ),
+    },
+    default_payment_brackets=_SERVER_B_FLAT_PAYMENT_BRACKETS,
+    clocked_in_role_id=1514873278458626118,
+    command_access_by_name=_SERVER_B_COMMAND_ACCESS,
+)
 
 
 GUILD_CONFIGS: dict[int, GuildConfig] = {
     SERVER_A_CONFIG.guild_id: SERVER_A_CONFIG,
-    # SERVER_B_CONFIG.guild_id: SERVER_B_CONFIG,
+    SERVER_B_CONFIG.guild_id: SERVER_B_CONFIG,
 }
 
 
