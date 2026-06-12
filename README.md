@@ -30,7 +30,8 @@ The bot supports multiple Discord servers via a per-guild config registry in `bo
 - Each supported server gets one `GuildConfig` entry in `GUILD_CONFIGS` (keyed by guild id) holding its role ids, channel ids, employee timezones, pay brackets, command permissions, and clocked-in role.
 - Servers **not** in the registry are rejected: commands reply "This bot is not configured for this server.", presence events are ignored, and no announcements are posted.
 - Time-tracking data is isolated per server automatically (every DB table is keyed by guild id or channel id).
-- To onboard a new server: fill in the commented `SERVER_B_CONFIG` template in `bot/guild_config.py` (role/channel/user ids), add it to `GUILD_CONFIGS`, invite the bot with `bot` + `applications.commands` scopes, and restart. Command visibility role-locks sync automatically for every configured guild on startup.
+- To onboard a new server: fill in the commented `SERVER_B_CONFIG` template in `bot/guild_config.py` (role/channel/user ids), add it to `GUILD_CONFIGS`, invite the bot with `bot` + `applications.commands` scopes, and restart. Slash commands sync to every configured guild on startup.
+- Note on visibility: Discord does not let bot tokens edit per-command role permissions, so commands are *visible* to everyone by default. Access is enforced at runtime (unauthorized users get an ephemeral denial). To also hide commands per role/channel, use Server Settings -> Integrations -> this app -> Commands in each server.
 
 ## Discord app setup (one-time)
 1. Go to https://discord.com/developers/applications and create an application.

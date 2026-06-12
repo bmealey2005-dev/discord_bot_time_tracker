@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from bot.config import Config, load_config
 from bot.cogs.time_tracking import TimeTrackingCog
 from bot.db import Database
-from bot.guild_config import GUILD_CONFIGS, GuildConfig
+from bot.guild_config import GUILD_CONFIGS
 
 
 class TimeTrackerBot(commands.Bot):
@@ -43,6 +43,10 @@ class TimeTrackerBot(commands.Bot):
             await self.tree.sync(guild=guild)
 
         # Copy global commands into every configured guild for instant availability.
+        # NOTE: Discord does not allow bot tokens to edit per-command role
+        # permissions (error 20001), so command *visibility* is managed in each
+        # server via Server Settings -> Integrations -> this app -> Commands.
+        # Actual access is enforced at runtime by _require_command_access.
         sync_guild_ids = set(GUILD_CONFIGS.keys())
         if self.config.dev_guild_id is not None:
             sync_guild_ids.add(int(self.config.dev_guild_id))
@@ -53,77 +57,6 @@ class TimeTrackerBot(commands.Bot):
                 await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
-
-        for cfg in GUILD_CONFIGS.values():
-            await self._sync_guild_command_permissions(cfg)
-
-    async def _sync_guild_command_permissions(self, guild_cfg: GuildConfig) -> None:
-        if self.application_id is None:
-            print("Skipping role-lock command visibility sync: application_id is unavailable.")
-            return
-
-        guild_id = int(guild_cfg.guild_id)
-        guild = discord.Object(id=guild_id)
-        try:
-            guild_commands = await self.tree.fetch_commands(guild=guild)
-        except discord.HTTPException as exc:
-            print(f"Failed to fetch guild commands for permission sync (guild {guild_id}): {exc!r}")
-            return
-
-        if not guild_commands:
-            print(f"No guild commands found for role-lock visibility sync in guild {guild_id}.")
-            return
-
-        updated = 0
-        for command in guild_commands:
-            allowed_role_names = guild_cfg.command_access_by_name.get(command.name)
-            if allowed_role_names is None:
-                print(
-                    f"Skipping permission sync for unknown guild command '{command.name}' ({command.id}) "
-                    f"in guild {guild_id}: not listed in command_access_by_name."
-                )
-                continue
-
-            permissions: list[dict[str, int | bool]] = [
-                {
-                    "id": guild_id,
-                    "type": int(discord.AppCommandPermissionType.role.value),
-                    "permission": False,
-                }
-            ]
-            seen_ids: set[int] = {guild_id}
-            for role_name in allowed_role_names:
-                role_id = int(guild_cfg.role_id_by_name[role_name])
-                if role_id in seen_ids:
-                    continue
-                seen_ids.add(role_id)
-                permissions.append(
-                    {
-                        "id": role_id,
-                        "type": int(discord.AppCommandPermissionType.role.value),
-                        "permission": True,
-                    }
-                )
-
-            payload = {"permissions": permissions}
-            try:
-                await self.http.edit_application_command_permissions(
-                    application_id=self.application_id,
-                    guild_id=guild_id,
-                    command_id=command.id,
-                    payload=payload,
-                )
-                updated += 1
-            except discord.HTTPException as exc:
-                print(
-                    f"Failed to sync command permissions for '{command.name}' ({command.id}) "
-                    f"in guild {guild_id}: {exc!r}"
-                )
-
-        print(
-            f"Applied role-lock command visibility permissions to {updated}/{len(guild_commands)} "
-            f"guild commands in guild {guild_id}."
-        )
 
     async def close(self) -> None:
         try:
