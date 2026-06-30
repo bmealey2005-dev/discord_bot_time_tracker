@@ -23,7 +23,7 @@ class Database:
         if self._is_postgres:
             if self._pool is not None:
                 return
-            self._pool = await asyncpg.create_pool(self._db_target, min_size=1, max_size=5, command_timeout=30)
+            self._pool = await asyncpg.create_pool(self._db_target, min_size=1, max_size=5, command_timeout=30, ssl='require')
             return
 
         if self._conn is not None:
